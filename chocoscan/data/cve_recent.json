@@ -1,0 +1,297 @@
+{
+  "openssh": [
+    {
+      "id": "CVE-2024-6387",
+      "description": "RegreSSHion: unauthenticated RCE in OpenSSH sshd via race condition on glibc-based Linux systems.",
+      "description_fr": "RegreSSHion : RCE non authentifié dans sshd via condition de course sur Linux glibc.",
+      "cvss": 8.1,
+      "severity": "HIGH",
+      "affected_versions": [
+        "< 9.8p1"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-6387"
+      ]
+    }
+  ],
+  "apache": [
+    {
+      "id": "CVE-2024-38475",
+      "description": "Apache HTTP Server 2.4.59 and earlier: improper escaping in mod_rewrite can map URLs to filesystem allowing code execution.",
+      "description_fr": "Apache 2.4.59 et antérieur : mod_rewrite permet l'exécution de code via URL mapping.",
+      "cvss": 9.1,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 2.4.60"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-38475"
+      ]
+    },
+    {
+      "id": "CVE-2024-27316",
+      "description": "Apache HTTP Server 2.4.55-2.4.58: HTTP/2 CONTINUATION flood DoS.",
+      "description_fr": "Apache 2.4.55-2.4.58 : flood HTTP/2 CONTINUATION, DoS.",
+      "cvss": 7.5,
+      "severity": "HIGH",
+      "affected_versions": [
+        ">= 2.4.55",
+        "< 2.4.59"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-27316"
+      ]
+    }
+  ],
+  "fortinet": [
+    {
+      "id": "CVE-2024-21762",
+      "description": "FortiOS SSL-VPN out-of-bounds write allowing unauthenticated RCE. Actively exploited.",
+      "description_fr": "FortiOS SSL-VPN : écriture hors limites, RCE non authentifié, exploité activement.",
+      "cvss": 9.6,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 7.4.3"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-21762"
+      ]
+    },
+    {
+      "id": "CVE-2024-55591",
+      "description": "FortiOS authentication bypass via Node.js WebSocket module, granting super-admin privileges.",
+      "description_fr": "FortiOS : bypass d'authentification via WebSocket Node.js, droits super-admin.",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 7.0.17"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-55591"
+      ]
+    }
+  ],
+  "paloalto": [
+    {
+      "id": "CVE-2024-3400",
+      "description": "PAN-OS GlobalProtect command injection allowing unauthenticated RCE as root. Zero-day exploited in the wild.",
+      "description_fr": "PAN-OS GlobalProtect : injection de commandes non authentifiée, RCE root, zero-day exploité.",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 11.1.2-h3"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-3400"
+      ]
+    },
+    {
+      "id": "CVE-2025-0108",
+      "description": "PAN-OS authentication bypass in web management interface allowing unauthorized PHP script invocation.",
+      "description_fr": "PAN-OS : bypass d'authentification dans l'interface web (2025).",
+      "cvss": 7.8,
+      "severity": "HIGH",
+      "affected_versions": [
+        "< 11.2.3"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2025-0108"
+      ]
+    }
+  ],
+  "ivanti": [
+    {
+      "id": "CVE-2025-0282",
+      "description": "Ivanti Connect Secure: stack-based buffer overflow allowing unauthenticated RCE. Exploited as zero-day.",
+      "description_fr": "Ivanti Connect Secure : débordement de pile, RCE non authentifié, zero-day exploité 2025.",
+      "cvss": 9.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 22.7R2.5"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2025-0282"
+      ]
+    },
+    {
+      "id": "CVE-2024-21893",
+      "description": "SSRF in Ivanti Connect Secure SAML component allowing access to restricted resources.",
+      "description_fr": "Ivanti Connect Secure : SSRF dans le composant SAML.",
+      "cvss": 8.2,
+      "severity": "HIGH",
+      "affected_versions": [
+        "< 22.3R3-S2"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-21893"
+      ]
+    }
+  ],
+  "jenkins": [
+    {
+      "id": "CVE-2024-23897",
+      "description": "Jenkins arbitrary file read via CLI args4j library. Enables reading /etc/passwd, SSH keys, secrets.key.",
+      "description_fr": "Jenkins CLI : lecture de fichiers arbitraires (clés SSH, secrets), CVE critique 2024.",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "<= 2.441"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-23897"
+      ]
+    }
+  ],
+  "teamcity": [
+    {
+      "id": "CVE-2024-27198",
+      "description": "JetBrains TeamCity: authentication bypass + RCE. Widely exploited to create admin accounts and deploy malware.",
+      "description_fr": "TeamCity : bypass d'authentification + RCE, massivement exploité mars 2024.",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 2023.11.4"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-27198"
+      ]
+    }
+  ],
+  "citrix": [
+    {
+      "id": "CVE-2023-4966",
+      "description": "Citrix Bleed: sensitive information disclosure leaking session tokens. Allows session hijacking without credentials.",
+      "description_fr": "Citrix Bleed : fuite de tokens de session, prise de contrôle de sessions authentifiées.",
+      "cvss": 9.4,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 14.1-8.50"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2023-4966"
+      ]
+    }
+  ],
+  "activemq": [
+    {
+      "id": "CVE-2023-46604",
+      "description": "Apache ActiveMQ OpenWire RCE via ClassPathXmlApplicationContext deserialization. Exploited to deploy ransomware.",
+      "description_fr": "ActiveMQ OpenWire : désérialisation RCE, exploité pour déployer des ransomwares.",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 5.15.16"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2023-46604"
+      ]
+    }
+  ],
+  "gitlab": [
+    {
+      "id": "CVE-2024-45409",
+      "description": "GitLab SAML authentication bypass allowing account takeover of any user.",
+      "description_fr": "GitLab : bypass SAML permettant la prise de contrôle de n'importe quel compte.",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 17.3.3"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-45409"
+      ]
+    }
+  ],
+  "confluence": [
+    {
+      "id": "CVE-2023-22527",
+      "description": "Confluence Data Center: template injection allowing unauthenticated RCE (critical, released Jan 2024).",
+      "description_fr": "Confluence : injection de template, RCE non authentifié (CVE critique janvier 2024).",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 8.5.4"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2023-22527"
+      ]
+    }
+  ],
+  "exchange": [
+    {
+      "id": "CVE-2024-21410",
+      "description": "Microsoft Exchange NTLM hash disclosure allowing relay attacks and privilege escalation.",
+      "description_fr": "Exchange : divulgation et relais de hash NTLM, élévation de privilèges (2024).",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< Feb 2024 patch"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-21410"
+      ]
+    }
+  ],
+  "php": [
+    {
+      "id": "CVE-2024-4577",
+      "description": "PHP CGI on Windows: argument injection allowing unauthenticated RCE. Affects PHP 8.1/8.2/8.3 on Windows.",
+      "description_fr": "PHP CGI Windows : injection d'arguments, RCE non authentifié (critique juin 2024).",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "< 8.3.8"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-4577"
+      ]
+    }
+  ],
+  "tomcat": [
+    {
+      "id": "CVE-2025-24813",
+      "description": "Apache Tomcat partial PUT enables file upload and RCE via default servlet interaction.",
+      "description_fr": "Apache Tomcat : partial PUT permettant upload de fichiers et RCE (2025).",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        ">= 11.0.0",
+        "< 11.0.3"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2025-24813"
+      ]
+    }
+  ],
+  "grafana": [
+    {
+      "id": "CVE-2024-9264",
+      "description": "Grafana 11.x SQL Expressions feature allows code execution, affecting all Grafana 11.0+ instances.",
+      "description_fr": "Grafana 11.x : exécution de code via SQL Expressions (CVE critique 2024).",
+      "cvss": 9.9,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        ">= 11.0.0",
+        "< 11.1.6"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-9264"
+      ]
+    }
+  ],
+  "vmware": [
+    {
+      "id": "CVE-2024-22245",
+      "description": "VMware Enhanced Authentication Plug-in: arbitrary Kerberos service ticket relay allowing Windows domain authentication abuse.",
+      "description_fr": "VMware EAP : relais de tickets Kerberos arbitraires (2024).",
+      "cvss": 9.6,
+      "severity": "CRITICAL",
+      "affected_versions": [
+        "EAP <= 6.7.0"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-22245"
+      ]
+    }
+  ]
+}
