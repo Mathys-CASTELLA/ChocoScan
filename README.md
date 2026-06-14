@@ -16,6 +16,6 @@ Voici un exemple de résultat en html :
 
 <img width="2552" height="1184" alt="image" src="https://github.com/user-attachments/assets/6986b689-2aff-41e6-8dfd-6df39a957803" />
 
-Il y'a plusieurs autres exemple de commande qui seront détailler plus précisemment dans un futur guide d'utilisation.
+Il y a plusieurs autres exemples de commande qui seront détaillés plus précisément dans un futur guide d'utilisation.
 
-L'objectif de ChocoScan est de lancer une requête NMAP et d'associé chaque ports et services ouverts à une CVE connue.
+L'objectif de ChocoScan est de lancer une requête NMAP et d'associer chaque port et services ouverts à une CVE connue.
