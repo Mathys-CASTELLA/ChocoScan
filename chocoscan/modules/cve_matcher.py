@@ -208,6 +208,394 @@ SERVICE_ALIASES = {
     "sip": "freepbx",
     "webdav": "webdav",
     "http webdav": "webdav",
+    "jetbrains teamcity": "teamcity",
+    "teamcity/": "teamcity",
+    "papercut": "papercut",
+    "papercut ng": "papercut",
+    "papercut mf": "papercut",
+
+
+    # ── OpenSSH / SSH variantes ──────────────────────────────────────────────
+    "ssh-2.0": "openssh",
+    "ssh-1.99": "openssh",
+    "ssh-1.5": "openssh",
+    "openssh_": "openssh",
+    "libssh": "openssh",
+    "dropbear": "openssh",
+    "bitvise": "openssh",
+    "ssh2": "openssh",
+    "putty": "openssh",
+
+    # ── Apache variantes ─────────────────────────────────────────────────────
+    "apache/2": "apache",
+    "apache/1": "apache",
+    "apache-coyote": "tomcat",
+    "httpd": "apache",
+    "mod_ssl": "apache",
+    "mod_perl": "apache",
+    "mod_python": "apache",
+    "mod_php": "apache",
+
+    # ── Nginx variantes ──────────────────────────────────────────────────────
+    "nginx/1": "nginx",
+    "nginx/0": "nginx",
+    "openresty": "nginx",
+    "tengine": "nginx",
+
+    # ── IIS variantes ────────────────────────────────────────────────────────
+    "microsoft-httpapi": "iis",
+    "microsoft httpapi": "iis",
+    "microsoft-iis/": "iis",
+    "iis/": "iis",
+    "asp.net": "iis",
+    "iis 10": "iis",
+    "iis 8": "iis",
+    "iis 7": "iis",
+    "iis 6": "iis",
+
+    # ── Tomcat variantes ─────────────────────────────────────────────────────
+    "tomcat/": "tomcat",
+    "catalina": "tomcat",
+    "jserv": "tomcat",
+    "glassfish": "tomcat",
+    "jetty/": "tomcat",
+    "jetty": "tomcat",
+    "wildfly": "jboss",
+    "jboss-eap": "jboss",
+    "jbossas": "jboss",
+
+    # ── FTP variantes ────────────────────────────────────────────────────────
+    "ftpd": "vsftpd",
+    "wu-ftpd": "vsftpd",
+    "pure-ftpd": "proftpd",
+    "filezilla": "proftpd",
+    "warftpd": "proftpd",
+    "serv-u": "proftpd",
+    "bftpd": "vsftpd",
+    "glftpd": "vsftpd",
+
+    # ── MySQL / MariaDB variantes ────────────────────────────────────────────
+    "mysql community": "mysql",
+    "mysql enterprise": "mysql",
+    "percona": "mysql",
+    "mariadb/": "mysql",
+    "mysql/": "mysql",
+    "aurora": "mysql",
+
+    # ── PostgreSQL variantes ─────────────────────────────────────────────────
+    "postgres/": "postgresql",
+    "postgresql/": "postgresql",
+    "pgbouncer": "postgresql",
+    "pgpool": "postgresql",
+
+    # ── Redis variantes ──────────────────────────────────────────────────────
+    "redis/": "redis",
+    "redis server": "redis",
+    "keydb": "redis",
+
+    # ── SMB / Windows variantes ──────────────────────────────────────────────
+    "cifs": "smb",
+    "microsoft-ds": "smb",
+    "netbios": "smb",
+    "netbios-ns": "smb",
+    "netbios-dgm": "smb",
+    "windows rpc": "rpc",
+    "msrpc": "rpc",
+    "epmapper": "rpc",
+    "ncacn_http": "rpc",
+
+    # ── RDP variantes ────────────────────────────────────────────────────────
+    "ms-wbt-server": "rdp",
+    "remote desktop protocol": "rdp",
+    "terminal services": "rdp",
+    "xrdp": "rdp",
+    "freerdp": "rdp",
+
+    # ── SSL/TLS variantes ─────────────────────────────────────────────────────
+    "ssl/": "ssl",
+    "tls": "ssl",
+    "https/": "ssl",
+    "stunnel": "ssl",
+    "openssl/": "ssl",
+
+    # ── DNS variantes ────────────────────────────────────────────────────────
+    "named": "dns",
+    "bind": "dns",
+    "bind9": "dns",
+    "powerdns": "dns",
+    "dnsmasq": "dns",
+    "unbound": "dns",
+    "domain ": "dns",
+    "mdns": "dns",
+    "dnssec": "dns",
+
+    # ── SMTP variantes ───────────────────────────────────────────────────────
+    "sendmail": "smtp",
+    "postfix smtpd": "smtp",
+    "postfix/smtp": "smtp",
+    "exim4": "smtp",
+    "qmail": "smtp",
+    "opensmtpd": "smtp",
+    "smtpd": "smtp",
+    "esmtp": "smtp",
+    "mailserver": "smtp",
+    "helo": "smtp",
+    "pop3": "smtp",
+    "imap": "smtp",
+    "dovecot": "smtp",
+    "courier": "smtp",
+
+    # ── Samba variantes ──────────────────────────────────────────────────────
+    "samba/": "samba",
+    "samba smbd": "samba",
+    "nmbd": "samba",
+    "winbind": "samba",
+
+    # ── VNC variantes ────────────────────────────────────────────────────────
+    "vnc-http": "vnc",
+    "realvnc": "vnc",
+    "tigervnc": "vnc",
+    "tightvnc": "vnc",
+    "ultravnc": "vnc",
+    "x11vnc": "vnc",
+    "libvncserver": "vnc",
+    "rfb ": "vnc",
+
+    # ── MongoDB variantes ────────────────────────────────────────────────────
+    "mongod": "mongodb",
+    "mongos": "mongodb",
+    "mongodb/": "mongodb",
+
+    # ── Elasticsearch variantes ──────────────────────────────────────────────
+    "elastic": "elasticsearch",
+    "elasticsearch/": "elasticsearch",
+    "opensearch": "elasticsearch",
+    "es-transport": "elasticsearch",
+
+    # ── Kubernetes variantes ─────────────────────────────────────────────────
+    "kubelet": "kubernetes",
+    "kube-proxy": "kubernetes",
+    "etcd/": "etcd",
+    "kubectl": "kubernetes",
+    "k8s": "kubernetes",
+    "kubeadm": "kubernetes",
+
+    # ── Docker variantes ─────────────────────────────────────────────────────
+    "dockerd": "docker",
+    "containerd": "docker",
+    "docker daemon": "docker",
+    "docker engine": "docker",
+    "docker api": "docker",
+    "container runtime": "docker",
+    "runc": "docker",
+
+    # ── Spring variantes ─────────────────────────────────────────────────────
+    "spring-boot": "spring",
+    "spring framework": "spring",
+    "spring mvc": "spring",
+    "spring security": "spring",
+    "spring cloud": "spring",
+    "pivotal": "spring",
+
+    # ── PHP variantes ────────────────────────────────────────────────────────
+    "php/": "php",
+    "php-fpm": "php",
+    "x-powered-by: php": "php",
+    "hhvm": "php",
+
+    # ── Node.js variantes ────────────────────────────────────────────────────
+    "express": "nodejs",
+    "expressjs": "nodejs",
+    "next.js": "nodejs",
+    "nuxt": "nodejs",
+    "fastify": "nodejs",
+    "nestjs": "nodejs",
+    "node/": "nodejs",
+
+    # ── Memcached variantes ──────────────────────────────────────────────────
+    "memcache/": "memcached",
+
+    # ── SNMP variantes ───────────────────────────────────────────────────────
+    "snmp/": "snmp",
+    "net-snmp": "snmp",
+    "cisco snmp": "snmp",
+
+    # ── LDAP variantes ───────────────────────────────────────────────────────
+    "ldap/": "ldap",
+    "active directory": "ldap",
+    "ad ds": "ldap",
+    "msad": "ldap",
+    "ldaps": "ldap",
+    "389 directory": "ldap",
+    "freeipa": "ldap",
+
+    # ── Kerberos variantes ───────────────────────────────────────────────────
+    "kerberos/": "kerberos",
+    "kdc": "kerberos",
+    "krb5": "kerberos",
+    "krb524d": "kerberos",
+
+    # ── NFS variantes ────────────────────────────────────────────────────────
+    "nfs/": "nfs",
+    "mountd": "nfs",
+    "rpc.mountd": "nfs",
+    "nfs3": "nfs",
+    "nfs4": "nfs",
+    "portmapper": "rpc",
+    "rpcinfo": "rpc",
+
+    # ── Zabbix variantes ────────────────────────────────────────────────────
+    "zabbix-agent2": "zabbix",
+    "zabbix agent": "zabbix",
+    "zabbix server": "zabbix",
+
+    # ── Grafana variantes ───────────────────────────────────────────────────
+    "grafana/": "grafana",
+
+    # ── Splunk variantes ────────────────────────────────────────────────────
+    "splunk web": "splunk",
+    "splunkd web": "splunk",
+
+    # ── GitLab variantes ────────────────────────────────────────────────────
+    "gitlab-workhorse": "gitlab",
+    "gitlab ce": "gitlab",
+    "gitlab ee": "gitlab",
+
+    # ── Jenkins variantes ───────────────────────────────────────────────────
+    "jenkins/": "jenkins",
+    "hudson": "jenkins",
+    "jenkins-ci": "jenkins",
+
+    # ── Confluence variantes ────────────────────────────────────────────────
+    "atlassian confluence": "confluence",
+    "confluence/": "confluence",
+
+    # ── Jira variantes ──────────────────────────────────────────────────────
+    "atlassian jira": "jira",
+    "jira software": "jira",
+    "jira service": "jira",
+
+    # ── WordPress variantes ─────────────────────────────────────────────────
+    "wp-login": "wordpress",
+    "wp-admin": "wordpress",
+    "wp-content": "wordpress",
+    "wpengine": "wordpress",
+
+    # ── Drupal variantes ────────────────────────────────────────────────────
+    "drupal/": "drupal",
+    "x-generator: drupal": "drupal",
+
+    # ── ColdFusion variantes ────────────────────────────────────────────────
+    "cfide": "coldfusion",
+    "adobe coldfusion": "coldfusion",
+    "lucee": "coldfusion",
+    "railo": "coldfusion",
+
+    # ── WebLogic variantes ──────────────────────────────────────────────────
+    "weblogic/": "weblogic",
+    "oracle weblogic": "weblogic",
+    "wls": "weblogic",
+    "t3 ": "weblogic",
+
+    # ── Fortinet variantes ──────────────────────────────────────────────────
+    "fortiweb": "fortinet",
+    "fortimail": "fortinet",
+    "fortiadc": "fortinet",
+    "fortiddos": "fortinet",
+    "fortianalyzer": "fortinet",
+
+    # ── Cisco ASA variantes ─────────────────────────────────────────────────
+    "cisco ftd": "asa",
+    "cisco firepower": "asa",
+    "adaptive security": "asa",
+
+    # ── SIP / VoIP ───────────────────────────────────────────────────────────
+    "sip ": "freepbx",
+    "asterisk pbx": "freepbx",
+    "asterisk/": "freepbx",
+    "voip": "freepbx",
+    "freeswitch": "freepbx",
+    "kamailio": "freepbx",
+    "opensips": "freepbx",
+
+    # ── Nouveaux services ────────────────────────────────────────────────────
+    "cassandra": "cassandra",
+    "cassandradb": "cassandra",
+    "influxdb": "influxdb",
+    "influx": "influxdb",
+    "prometheus": "prometheus",
+    "pushgateway": "prometheus",
+    "alertmanager": "prometheus",
+    "netdata": "netdata",
+    "opentsdb": "opentsdb",
+    "mqtt": "mqtt",
+    "mosquitto": "mqtt",
+    "emqx": "mqtt",
+    "cups": "cups",
+    "ipp": "cups",
+    "ipp/": "cups",
+    "distcc": "distcc",
+    "distccd": "distcc",
+    "rsyslog": "rsyslog",
+    "syslog": "rsyslog",
+    "syslog-ng": "rsyslog",
+    "x11": "x11",
+    "x display": "x11",
+    "xserver": "x11",
+    "xorg": "x11",
+    "postgres exporter": "postgresql",
+    "pgadmin": "phpmyadmin",
+    "redis exporter": "redis",
+    "metabase": "metabase",
+    "superset": "metabase",
+    "airflow": "airflow",
+    "celery": "airflow",
+    "rabbitmq management": "rabbitmq",
+    "rabbitmq/": "rabbitmq",
+    "mattermost": "rocketchat",
+    "slack-compatible": "rocketchat",
+    "gitlab-pages": "gitlab",
+    "minio/": "minio",
+    "s3-compatible": "minio",
+    "consul/": "consul",
+    "hashicorp consul": "consul",
+    "hashicorp nomad": "consul",
+    "vault/": "vault",
+    "hashicorp": "vault",
+    "traefik": "traefik",
+    "traefik/": "traefik",
+    "envoy": "traefik",
+    "istio": "traefik",
+    "linkerd": "traefik",
+    "neo4j": "neo4j",
+    "bolt": "neo4j",
+    "neo4j/": "neo4j",
+    "orientdb": "neo4j",
+    "arangodb": "neo4j",
+    "solr": "solr",
+    "apache solr": "solr",
+    "lucene": "solr",
+    "kafka": "kafka",
+    "apache kafka": "kafka",
+    "zookeeper": "kafka",
+    "nats": "kafka",
+    "pulsar": "kafka",
+    "clickhouse": "clickhouse",
+    "clickhouse/": "clickhouse",
+    "hive": "hadoop",
+    "hadoop": "hadoop",
+    "hdfs": "hadoop",
+    "hbase": "hadoop",
+    "spark": "hadoop",
+    "presto": "hadoop",
+    "trino": "hadoop",
+    "druid": "hadoop",
+    "tensorflow serving": "tensorflow",
+    "torchserve": "tensorflow",
+    "ollama": "tensorflow",
+    "triton": "tensorflow",
+    "openwebui": "tensorflow",
+    "langchain": "tensorflow",
 }
 
 LOCAL_PRIVESC_SERVICES = [
@@ -272,7 +660,9 @@ def load_recent_db() -> dict:
 def extract_service_key(service_name: str, banner: str = "") -> str | None:
     """Détermine la clé de la CVE DB depuis le nom du service et sa bannière."""
     combined = f"{service_name} {banner}".lower().strip()
-    for alias, key in SERVICE_ALIASES.items():
+    # Trier par longueur décroissante pour que les aliases plus spécifiques
+    # soient évalués en premier (ex: "apache tomcat" avant "apache")
+    for alias, key in sorted(SERVICE_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
         if alias in combined:
             return key
     return None
