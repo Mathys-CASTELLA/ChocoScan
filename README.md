@@ -59,7 +59,7 @@ Installation
 Prérequis : Python 3.11+, pip
 
 bash# Cloner le dépôt
-git clone https://github.com/<votre-user>/chocoscan.git
+git clone https://github.com/Mathys-CASTELLA/chocoscan.git
 cd chocoscan
 
 # Installer les dépendances
