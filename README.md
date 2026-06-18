@@ -4,17 +4,6 @@ ChocoScan est un outil de mapping CVE post-Nmap : il prend en entrée les résul
 
 L'objectif est de combler le vide entre "j'ai une liste de ports ouverts" et "je sais quoi attaquer en premier" — en CTF comme en pentest réel.
 
-Nmap / Masscan / RustScan / Nessus
-              │
-              ▼
-        ChocoScan
-              │
-    ┌─────────┼──────────┐
-    ▼         ▼          ▼
- Terminal   HTML      JSON
- interactif rapport   export
-
-
 Fonctionnalités
 
 Moteur CVE
@@ -265,40 +254,6 @@ python update_db_tags.py
 python update_db_tags.py --list-tags
 
 Une clé API NVD gratuite est disponible sur nvd.nist.gov/developers/request-an-api-key — elle multiplie la vitesse de mise à jour par 10.
-
-
-Architecture du projet
-
-chocoscan/
-├── chocoscan.py              # Point d'entrée principal
-│
-├── modules/
-│   ├── config.py             # Lecture de ~/.chocoscan.conf (TOML)
-│   ├── nmap_parser.py        # Parsing Nmap / Masscan / RustScan / Nessus
-│   ├── input_parser.py       # Routeur de formats d'entrée (10 formats)
-│   ├── cve_matcher.py        # Matching service → CVEs (local + API NVD)
-│   ├── version_checker.py    # Comparaison de versions robuste (confidence score)
-│   ├── contextual_scorer.py  # Score composite + liste CISA KEV
-│   ├── tag_definitions.py    # Taxonomie des 19 tags threat intel
-│   ├── interactive.py        # TUI curses (navigation, marquage, export)
-│   ├── report_generator.py   # Export HTML / JSON
-│   ├── chain_analyzer.py     # Détection de CVEs chaînables
-│   ├── ad_detector.py        # Détection contexte Active Directory
-│   ├── bloodhound_integration.py  # Croisement données BloodHound
-│   ├── contextual_scorer.py  # Score composite contextuel
-│   ├── diff_engine.py        # Comparaison entre deux scans
-│   ├── web_enumerator.py     # Énumération HTTP intelligente
-│   └── exploit_finder.py     # Recherche exploits GitHub
-│
-├── data/
-│   ├── cve_db.json           # Base locale (1 496 CVEs, 145 services, taguées)
-│   └── cve_recent.json       # CVEs récentes (prioritaires au matching)
-│
-├── update_db.py              # MAJ complète depuis l'API NVD
-├── update_db_critical.py     # MAJ CVEs critiques uniquement (CVSS ≥ 9.0)
-├── update_db_ctf.py          # Injection CVEs CTF/pentest curated
-└── update_db_tags.py         # Tagging threat intel de la base
-
 
 Référence des options CLI
 
