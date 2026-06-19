@@ -11,76 +11,7 @@ import hashlib
 import requests
 from pathlib import Path
 from datetime import datetime, timedelta
-from modules.version_checker import is_version_affected, check_version_affected, Confidence
-
-try:
-    from modules.config import find_config_file, load_config, load_env_overrides
-    _CONFIG_AVAILABLE = True
-except ImportError:
-    _CONFIG_AVAILABLE = False
-
-
-# ─── Clé API NVD ───────────────────────────────────────────────────────────────
-
-_NVD_KEY_WARNED = False  # affiche le message d'astuce une seule fois par exécution
-
-
-def get_nvd_api_key() -> str | None:
-    """
-    Résout la clé API NVD depuis (par ordre de priorité) :
-      1. Variable d'environnement $CHOCOSCAN_NVD_API_KEY ou $NVD_API_KEY
-      2. ~/.chocoscan.conf  →  nvd_api_key = "..."
-
-    Une clé API NVD gratuite multiplie le rate limit par 10
-    (5 req/30s sans clé → 50 req/30s avec clé).
-    Demande sur : https://nvd.nist.gov/developers/request-an-api-key
-    """
-    import os
-
-    # 1. Variables d'environnement (les deux noms sont acceptés)
-    for env_var in ("CHOCOSCAN_NVD_API_KEY", "NVD_API_KEY"):
-        val = os.environ.get(env_var, "").strip()
-        if val:
-            return val
-
-    # 2. Fichier de config
-    if _CONFIG_AVAILABLE:
-        try:
-            path = find_config_file()
-            if path:
-                # nvd_api_key n'est pas dans CONFIGURABLE_KEYS (sensible, on la lit à part)
-                import tomllib
-                with open(path, "rb") as f:
-                    raw = tomllib.load(f)
-                key = raw.get("nvd_api_key", "").strip()
-                if key:
-                    return key
-        except Exception:
-            pass
-
-    return None
-
-
-def _warn_no_api_key_once():
-    """Affiche une seule fois par exécution un message d'astuce sur la clé NVD."""
-    global _NVD_KEY_WARNED
-    if _NVD_KEY_WARNED:
-        return
-    _NVD_KEY_WARNED = True
-    try:
-        from rich.console import Console
-        Console(stderr=True).print(
-            "[dim]💡 Astuce : sans clé API NVD, le fallback est limité à 5 requêtes/30s "
-            "et peut ralentir le scan. Ajoutez nvd_api_key = \"...\" dans ~/.chocoscan.conf "
-            "pour passer à 50 requêtes/30s.\n"
-            "   Clé gratuite : https://nvd.nist.gov/developers/request-an-api-key[/dim]"
-        )
-    except ImportError:
-        print(
-            "[i] Astuce : sans clé API NVD, le fallback est limité à 5 req/30s.\n"
-            "    Ajoutez nvd_api_key dans ~/.chocoscan.conf pour 50 req/30s.\n"
-            "    Clé gratuite : https://nvd.nist.gov/developers/request-an-api-key"
-        )
+from modules.version_checker import is_version_affected
 
 
 # Chemins
@@ -756,10 +687,6 @@ def search_local_db(service_key: str, version: str) -> list:
     Recherche des CVE dans les bases locales pour un service/version.
     Priorité : cve_recent.json (CVEs récentes) > cve_db.json (base principale)
     Les doublons (même CVE ID) sont dédupliqués, recent_db prioritaire.
-
-    Chaque CVE retournée porte un champ `_confidence` (certain/likely/uncertain)
-    qui reflète la fiabilité du matching de version — utilisé par le rapport HTML
-    pour distinguer visuellement les CVEs confirmées des CVEs supposées.
     """
     main_db   = load_local_db()
     recent_db = load_recent_db()
@@ -767,28 +694,13 @@ def search_local_db(service_key: str, version: str) -> list:
     seen_ids = set()
     results  = []
 
-    def _confidence_for(cve: dict) -> dict:
-        """Calcule la confidence et enrichit la CVE avec les métadonnées de matching."""
-        affected = cve.get("affected_versions", [])
-        if not version:
-            # Pas de version détectée par Nmap du tout → on ne peut rien confirmer
-            return {
-                "_confidence":   Confidence.UNCERTAIN.value,
-                "_match_reason": "Version non détectée par Nmap pour ce service",
-            }
-        match = check_version_affected(version, "", affected)
-        return {
-            "_confidence":   match.confidence.value,
-            "_match_reason": match.reason,
-        }
-
     # 1. CVE récentes en priorité
     for cve in recent_db.get(service_key, []):
         if not version or is_version_affected(version, cve.get("affected_versions", [])):
             cve_id = cve.get("id", "")
             if cve_id not in seen_ids:
                 seen_ids.add(cve_id)
-                results.append({**cve, "source": "Local DB (récent)", **_confidence_for(cve)})
+                results.append({**cve, "source": "Local DB (récent)"})
 
     # 2. Base principale
     for cve in main_db.get(service_key, []):
@@ -796,7 +708,7 @@ def search_local_db(service_key: str, version: str) -> list:
             cve_id = cve.get("id", "")
             if cve_id not in seen_ids:
                 seen_ids.add(cve_id)
-                results.append({**cve, "source": "Local DB", **_confidence_for(cve)})
+                results.append({**cve, "source": "Local DB"})
 
     return results
 
@@ -827,10 +739,6 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
     """
     Interroge l'API NVD comme fallback, avec cache persistant 24h.
     Retourne une liste de CVE simplifiées.
-
-    Utilise automatiquement une clé API NVD si configurée (voir get_nvd_api_key())
-    pour passer de 5 req/30s à 50 req/30s — réduit considérablement le temps
-    de scan sur les services non couverts par la base locale.
     """
     cache = _load_nvd_cache()
     key   = _cache_key(service, version)
@@ -839,46 +747,12 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
     if key in cache and _cache_is_valid(cache[key]):
         return cache[key]["data"]
 
-    api_key = get_nvd_api_key()
-    if not api_key:
-        _warn_no_api_key_once()
-
-    query   = f"{service} {version}".strip()
-    url     = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-    params  = {"keywordSearch": query, "resultsPerPage": max_results}
-    headers = {"apiKey": api_key} if api_key else {}
+    query  = f"{service} {version}".strip()
+    url    = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    params = {"keywordSearch": query, "resultsPerPage": max_results}
 
     try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-
-        # ── Gestion fine des erreurs HTTP avant raise_for_status ──────────────
-        if resp.status_code == 403:
-            try:
-                from rich.console import Console
-                Console(stderr=True).print(
-                    "[yellow][!] NVD API : accès refusé (403). "
-                    "Votre clé API est peut-être invalide ou expirée.[/yellow]"
-                )
-            except ImportError:
-                print("[!] NVD API : accès refusé (403). Clé API invalide ou expirée ?")
-            return [{"id": "API_ERROR", "description": "NVD API : 403 Forbidden (clé invalide ?)",
-                     "cvss": "N/A", "severity": "N/A"}]
-
-        if resp.status_code == 429:
-            try:
-                from rich.console import Console
-                hint = ("Ajoutez une clé API NVD pour un quota plus large."
-                        if not api_key else
-                        "Quota dépassé malgré la clé API — réessayez dans quelques secondes.")
-                Console(stderr=True).print(
-                    f"[yellow][!] NVD API : rate limit atteint (429). {hint}\n"
-                    f"    https://nvd.nist.gov/developers/request-an-api-key[/yellow]"
-                )
-            except ImportError:
-                print(f"[!] NVD API : rate limit atteint (429).")
-            return [{"id": "API_ERROR", "description": "NVD API : rate limit dépassé (429)",
-                     "cvss": "N/A", "severity": "N/A"}]
-
+        resp = requests.get(url, params=params, timeout=10)
         resp.raise_for_status()
         data    = resp.json()
         results = []
@@ -917,9 +791,7 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
         cache[key] = {"timestamp": datetime.now().isoformat(), "data": results}
         _save_nvd_cache(cache)
 
-        # Rate limiting adaptatif : 50 req/30s avec clé API, 5 req/30s sans
-        # (NVD recommande de rester sous la limite officielle avec une marge)
-        time.sleep(0.6 / 10 if api_key else 0.6)
+        time.sleep(0.6)  # Rate limiting NVD : 5 req/s sans clé API
         return results
 
     except requests.exceptions.Timeout:

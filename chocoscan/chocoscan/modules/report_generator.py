@@ -24,32 +24,6 @@ def _tag_csv(tags: list) -> str:
     return ",".join(tags) if tags else ""
 
 
-def _confidence_html_badge(confidence: str) -> str:
-    """
-    Génère un badge HTML indiquant la fiabilité du matching de version.
-
-    - certain   : version Nmap détectée et comparée avec succès aux bornes CVE
-    - likely    : CVE sans contrainte de version (s'applique par défaut)
-    - uncertain : version non détectée par Nmap — CVE potentiellement non applicable
-    """
-    badges = {
-        "certain": (
-            '<span class="conf-badge conf-certain" title="Version détectée et confirmée par Nmap">'
-            '✓ Confirmée</span>'
-        ),
-        "likely": (
-            '<span class="conf-badge conf-likely" title="Aucune contrainte de version sur cette CVE">'
-            '~ Probable</span>'
-        ),
-        "uncertain": (
-            '<span class="conf-badge conf-uncertain" title="Version non détectée par Nmap — '
-            'à vérifier manuellement avant exploitation">'
-            '⚠ Non confirmée</span>'
-        ),
-    }
-    return badges.get(confidence, "")
-
-
 
 @lru_cache(maxsize=2)
 def _load_logo_b64(filename: str) -> str:
@@ -182,10 +156,6 @@ def export_html(results: list, output_file: str, target: str, scan_date: str, ch
             cve_tags  = c.get("tags", []) or c.get("ctx_tags", [])
             tags_html = _tag_html_badges(cve_tags) if cve_tags else ""
 
-            # Badge de confiance du matching de version (certain/likely/uncertain)
-            confidence    = c.get("_confidence", "")
-            confidence_badge = _confidence_html_badge(confidence)
-
             nvd_link = f'<a href="https://nvd.nist.gov/vuln/detail/{cid}" target="_blank" class="cve-link">{cid}</a>' if cid.startswith("CVE-") else f'<span class="cve-link-plain">{cid}</span>'
 
             # Exploits
@@ -222,7 +192,6 @@ def export_html(results: list, output_file: str, target: str, scan_date: str, ch
                   <span class="score-num" style="color:{color}">{c.get('cvss','N/A')}</span>
                 </td>
                 <td class="td-ctx">{ctx_badge}</td>
-                <td class="td-conf">{confidence_badge}</td>
                 <td class="td-desc">
                   <div class="desc-en">{desc or '<em>N/A</em>'}</div>
                   <div class="desc-fr">{desc_fr or ''}</div>
@@ -285,7 +254,6 @@ def export_html(results: list, output_file: str, target: str, scan_date: str, ch
                   <th class="sortable" onclick="sortTable({idx},1)">Sévérité ↕</th>
                   <th class="sortable" onclick="sortTable({idx},2)">CVSS ↕</th>
                   <th class="sortable" onclick="sortTable({idx},3)">Score CTX ↕</th>
-                  <th>Confiance</th>
                   <th>Description</th>
                   <th>Versions affectées</th>
                   <th>Exploit</th>
@@ -715,22 +683,6 @@ def export_html(results: list, output_file: str, target: str, scan_date: str, ch
 
     .td-score {{ white-space: nowrap; text-align: center; }}
     .td-ctx {{ min-width: 130px; vertical-align: top; padding: .4rem .6rem !important; }}
-    .td-conf {{ min-width: 120px; vertical-align: top; padding: .4rem .6rem !important; }}
-    .conf-badge {{
-      display: inline-block; font-size: .68rem; font-weight: 700;
-      padding: .15rem .45rem; border-radius: 5px; white-space: nowrap;
-      font-family: 'Courier New', monospace; letter-spacing: .01em;
-      cursor: help; border: 1px solid;
-    }}
-    .conf-certain {{
-      color: #4ade80; background: #4ade8018; border-color: #4ade8044;
-    }}
-    .conf-likely {{
-      color: #94a3b8; background: #94a3b818; border-color: #94a3b844;
-    }}
-    .conf-uncertain {{
-      color: #fbbf24; background: #fbbf2418; border-color: #fbbf2444;
-    }}
     .score-num {{
       font-family: 'Courier New', monospace;
       font-size: 1.1rem;
@@ -1114,5 +1066,3 @@ document.addEventListener('DOMContentLoaded',()=>{{
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(html)
-
-    return output_file

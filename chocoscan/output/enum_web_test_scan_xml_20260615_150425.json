@@ -1,0 +1,40 @@
+[
+  {
+    "target": "http://target.local:80",
+    "host": "target.local",
+    "port": 80,
+    "stacks": [
+      "generic",
+      "apache",
+      "php"
+    ],
+    "wordlist_size": 152,
+    "results": []
+  },
+  {
+    "target": "https://target.local:443",
+    "host": "target.local",
+    "port": 443,
+    "stacks": [
+      "generic",
+      "apache",
+      "php"
+    ],
+    "wordlist_size": 152,
+    "results": []
+  },
+  {
+    "target": "http://target.local:8080",
+    "host": "target.local",
+    "port": 8080,
+    "stacks": [
+      "generic",
+      "apache",
+      "php",
+      "tomcat",
+      "tomcat_manager"
+    ],
+    "wordlist_size": 187,
+    "results": []
+  }
+]
