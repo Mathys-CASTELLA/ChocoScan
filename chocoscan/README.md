@@ -12,7 +12,7 @@
 [![NVD](https://img.shields.io/badge/Source-NVD%20%2B%20CISA%20KEV-red?style=flat-square)](https://nvd.nist.gov)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-*Développé par [Kinder-Bueno](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
+*Développé par [Mathys-CASTELLA](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
 
 </div>
 
