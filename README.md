@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="assets/chocoscan_cli.png" alt="ChocoScan Logo" width="220"/>
+<img width="637" height="425" alt="chocoscan_cli" src="https://github.com/user-attachments/assets/b9af71b9-5259-49d0-82e8-d5a1352bf147" />
+
 
 # ChocoScan
 
