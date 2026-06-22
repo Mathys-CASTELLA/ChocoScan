@@ -727,15 +727,28 @@ def load_recent_db() -> dict:
 # ─── Extraction service / version ─────────────────────────────────────────────
 
 def extract_service_key(service_name: str, banner: str = "") -> str | None:
-    """Détermine la clé de la CVE DB depuis le nom du service et sa bannière."""
+    """
+    Détermine la clé de la CVE DB depuis le nom du service et sa bannière.
+
+    Le matching se fait par mots entiers (frontières \\b), pas par simple
+    sous-chaîne : ça évite les faux positifs où un alias court apparaît
+    par hasard à l'intérieur d'un autre mot. Exemples concrets corrigés :
+        "digit-service"  ne matche plus "git"
+        "legitimate-app" ne matche plus "git"
+        "h2o-proxy"      ne matche plus "h2" (h2_database)
+    """
     combined = f"{service_name} {banner}".lower().strip()
     # Trier par longueur décroissante pour que les aliases plus spécifiques
     # soient évalués en premier (ex: "apache tomcat" avant "apache")
     for alias, key in sorted(SERVICE_ALIASES.items(), key=lambda x: len(x[0]), reverse=True):
-        if alias in combined:
+        # \b ne fonctionne correctement que sur des caractères alphanumériques :
+        # un alias comme "h2" doit matcher "h2 database" mais pas "h2o-proxy".
+        # re.escape gère les alias contenant des espaces ou caractères spéciaux
+        # (ex: "apache tomcat", "node.js").
+        pattern = r"\b" + re.escape(alias) + r"\b"
+        if re.search(pattern, combined):
             return key
     return None
-
 
 def extract_version_from_banner(banner: str) -> str:
     """Extrait la version depuis une bannière nmap."""
@@ -823,16 +836,26 @@ def translate_to_french(text: str) -> str:
 
 # ─── API NVD avec cache ───────────────────────────────────────────────────────
 
-def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
+def search_nvd_api(service: str, version: str, max_results: int = 5, cpe: str | None = None) -> list:
     """
     Interroge l'API NVD comme fallback, avec cache persistant 24h.
     Retourne une liste de CVE simplifiées.
+
+    Si `cpe` est fourni (CPE 2.3 résolu via modules.cpe_resolver), la requête
+    utilise `cpeName` plutôt que `keywordSearch` — bien plus précis, réduit
+    nettement les faux positifs/négatifs liés à l'ambiguïté des noms en
+    texte libre (ex: "git" qui matche aussi "gitlab", "digit", etc. en
+    keywordSearch, alors qu'un CPE cible précisément le bon produit).
 
     Utilise automatiquement une clé API NVD si configurée (voir get_nvd_api_key())
     pour passer de 5 req/30s à 50 req/30s — réduit considérablement le temps
     de scan sur les services non couverts par la base locale.
     """
     cache = _load_nvd_cache()
+    # Le cache est clé sur (service, version) indépendamment du mode de
+    # requête utilisé : le résultat attendu pour un même service/version
+    # est le même, que la résolution sous-jacente soit passée par CPE ou
+    # par mot-clé.
     key   = _cache_key(service, version)
 
     # Retour depuis le cache si valide
@@ -843,10 +866,17 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
     if not api_key:
         _warn_no_api_key_once()
 
-    query   = f"{service} {version}".strip()
     url     = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-    params  = {"keywordSearch": query, "resultsPerPage": max_results}
     headers = {"apiKey": api_key} if api_key else {}
+
+    if cpe:
+        # Requête précise par CPE. On laisse le composant version du CPE
+        # tel que résolu (souvent "*" pour la base enrichie, ou une version
+        # précise si fournie par l'appelant) — NVD filtre alors sur ce CPE.
+        params = {"cpeName": cpe, "resultsPerPage": max_results}
+    else:
+        query  = f"{service} {version}".strip()
+        params = {"keywordSearch": query, "resultsPerPage": max_results}
 
     try:
         resp = requests.get(url, params=params, headers=headers, timeout=10)
@@ -879,6 +909,12 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
             return [{"id": "API_ERROR", "description": "NVD API : rate limit dépassé (429)",
                      "cvss": "N/A", "severity": "N/A"}]
 
+        # Un CPE mal formé ou inconnu de NVD renvoie un 404 / 400 selon les cas.
+        # On retente alors automatiquement en keywordSearch plutôt que de
+        # remonter une erreur sèche à l'utilisateur.
+        if cpe and resp.status_code in (400, 404):
+            return search_nvd_api(service, version, max_results=max_results, cpe=None)
+
         resp.raise_for_status()
         data    = resp.json()
         results = []
@@ -910,8 +946,15 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
                 "description_fr": translate_to_french(desc_short),
                 "cvss":           score,
                 "severity":       severity,
-                "source":         "NVD API",
+                "source":         "NVD API (CPE)" if cpe else "NVD API",
             })
+
+        # Si une requête CPE n'a rien retourné, on retente en keywordSearch
+        # plutôt que de renvoyer une liste vide (le CPE résolu peut être trop
+        # restrictif, ex: mauvaise version exacte) — comportement de repli
+        # cohérent avec le 400/404 ci-dessus.
+        if cpe and not results:
+            return search_nvd_api(service, version, max_results=max_results, cpe=None)
 
         # Mise en cache
         cache[key] = {"timestamp": datetime.now().isoformat(), "data": results}
@@ -930,11 +973,51 @@ def search_nvd_api(service: str, version: str, max_results: int = 5) -> list:
 
 # ─── Point d'entrée principal ─────────────────────────────────────────────────
 
+def filter_cves(
+    cves: list,
+    min_cvss: float,
+    severity_filter: set | None,
+    after_year: int | None = None,
+) -> list:
+    """
+    Applique les filtres CVSS minimum, sévérité et année sur une liste de CVEs.
+    Les filtres sont combinés en AND logique.
+    Désormais dans cve_matcher pour être importable par web/pipeline.py.
+    """
+    import re as _re
+    result = []
+    for c in cves:
+        if min_cvss > 0:
+            try:
+                score = float(str(c.get("cvss", 0)).replace("N/A", "0") or 0)
+                if score < min_cvss:
+                    continue
+            except (ValueError, TypeError):
+                continue
+
+        if severity_filter:
+            sev = str(c.get("severity", "UNKNOWN")).upper()
+            if sev not in severity_filter:
+                continue
+
+        if after_year:
+            cve_id = c.get("id", "")
+            m = _re.match(r"CVE-(\d{4})-", cve_id, _re.IGNORECASE)
+            if not m or int(m.group(1)) < after_year:
+                continue
+
+        result.append(c)
+    return result
+
+
 def get_cves_for_service(service_name: str, banner: str, use_api_fallback: bool = True) -> list:
     """
     Point d'entrée principal.
     1. Essaie la base locale (recent + main)
     2. Fallback API NVD avec cache si rien trouvé
+       — utilise une requête par CPE (cpeName) si un CPE est résolu pour ce
+         service, plus précise que keywordSearch ; retombe automatiquement
+         sur keywordSearch si la résolution CPE échoue ou ne donne rien.
     """
     version     = extract_version_from_banner(banner)
     service_key = extract_service_key(service_name, banner)
@@ -948,6 +1031,14 @@ def get_cves_for_service(service_name: str, banner: str, use_api_fallback: bool 
 
     # Fallback API NVD (avec cache)
     if use_api_fallback and (service_name or banner):
-        return search_nvd_api(service_name if service_name else "", version)
+        cpe = None
+        if service_key:
+            try:
+                from modules.cpe_resolver import resolve_cpe
+                cpe = resolve_cpe(service_key, product_name=service_key, version=version,
+                                   use_api_fallback=False)  # statique uniquement ici, pas de double appel réseau
+            except ImportError:
+                cpe = None
+        return search_nvd_api(service_name if service_name else "", version, cpe=cpe)
 
     return []

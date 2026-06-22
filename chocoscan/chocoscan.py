@@ -17,6 +17,7 @@ import argparse
 import os
 import sys
 import json
+import getpass
 from datetime import datetime
 from pathlib import Path
 
@@ -47,6 +48,11 @@ from modules.contextual_scorer import inject_scores, format_score_inline, GRADE_
 from modules.bloodhound_integration import load_bloodhound, cross_with_cves, display_bloodhound_terminal, bloodhound_to_html_section
 from modules.diff_engine import compute_diff, display_diff_terminal, diff_to_html
 from modules.interactive import run_interactive
+from modules.ignore_list import load_ignore_list, filter_ignored, find_ignore_file
+from modules.credentialed_scan import (
+    collect_packages_ssh, packages_to_services,
+    SSHCredentialError, SSHConnectionError,
+)
 from modules.config import (
     apply_to_parser, find_config_file,
     cmd_config_show, cmd_config_init, cmd_config_init_force,
@@ -95,7 +101,7 @@ def style_cvss(score) -> str:
 
 
 def print_banner():
-    art = image_to_rich_art(str(ASSETS_DIR / "chocoscan_cli.png"), width=50)
+    art = image_to_rich_art(str(ASSETS_DIR / "chocoscan_cli.png"), width=70)
     console.print(art)
     console.print(f"[bold cyan]{BANNER}[/bold cyan]")
     console.print(
@@ -340,12 +346,25 @@ Exemples d'utilisation :
     input_group.add_argument("-x", "--xml", metavar="FILE",
                               help="Fichier de scan (Nmap XML/texte, Masscan, RustScan, Nessus CSV/.nessus, JSON)")
     input_group.add_argument("--scan", metavar="TARGET", help="Lancer un scan nmap directement sur la cible")
+    input_group.add_argument("--ssh-scan", metavar="TARGET",
+                              help="Scan authentifié via SSH : liste les paquets installés sur la cible "
+                                   "(dpkg/rpm/pacman) et matche les CVE correspondantes. "
+                                   "Nécessite --ssh-user (et --ssh-pass ou --ssh-key)")
     input_group.add_argument("--diff", nargs=2, metavar=("AVANT", "APRES"),
                               help="Comparer deux fichiers de scan (tout format supporté)")
     parser.add_argument("--input-format", default="auto", metavar="FORMAT",
                         help="Format d\'entrée : auto (défaut), nmap_xml, nmap_text, "
                              "masscan_xml, masscan_json, masscan_text, rustscan_json, "
                              "rustscan_text, nessus_csv, nessus_xml, chocoscan_json")
+    parser.add_argument("--ssh-user", default=None, metavar="USER",
+                        help="Utilisateur SSH pour --ssh-scan")
+    parser.add_argument("--ssh-pass", default=None, metavar="PASS",
+                        help="Mot de passe SSH pour --ssh-scan (si omis : tentative par clé, "
+                             "puis prompt masqué)")
+    parser.add_argument("--ssh-key", default=None, metavar="FILE",
+                        help="Chemin vers une clé privée SSH pour --ssh-scan")
+    parser.add_argument("--ssh-port", type=int, default=22, metavar="PORT",
+                        help="Port SSH pour --ssh-scan (défaut: 22)")
 
     parser.add_argument("--no-api", action="store_true", help="Désactiver le fallback API NVD")
     parser.add_argument("--export-html", action="store_true", help="Générer un rapport HTML")
@@ -374,10 +393,18 @@ Exemples d'utilisation :
                         help="Désactiver la détection automatique du contexte Active Directory")
     parser.add_argument("--no-chains", action="store_true",
                         help="Désactiver l'analyse des CVEs chaînables")
+    parser.add_argument("--ignore-file", default=None, metavar="FILE",
+                        help="Fichier de CVE ID à exclure des résultats (défaut: .chocoscanignore "
+                             "dans le répertoire courant, puis ~/.chocoscanignore)")
+    parser.add_argument("--no-ignore", action="store_true",
+                        help="Désactiver la prise en compte du fichier .chocoscanignore")
     parser.add_argument("--after-year", type=int, default=None, metavar="AAAA",
                         help="Filtrer les CVEs publiées à partir de cette année (ex: 2024 → garde CVE-2024-x, CVE-2025-x…)")
     parser.add_argument("--interactive", "-i", action="store_true",
                         help="Mode interactif CLI : naviguer, marquer et exporter les CVEs (style fzf)")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Affiche les services dont le nom n'a matché aucun alias connu "
+                             "(diagnostic des trous de couverture de la base locale)")
 
     # ── Charger la config ~/.chocoscan.conf ─────────────────────────────────
     _cfg_path = apply_to_parser(parser)
@@ -386,6 +413,17 @@ Exemples d'utilisation :
 
     # Validation et parse des filtres
     severity_filter = parse_severity_filter(args.severity)
+
+    # Chargement de la whitelist .chocoscanignore
+    ignored_cves: set[str] = set()
+    if not args.no_ignore:
+        ignored_cves = load_ignore_list(args.ignore_file)
+        if ignored_cves:
+            resolved_path = find_ignore_file(args.ignore_file)
+            console.print(
+                f"[dim]Whitelist : {len(ignored_cves)} CVE ignorée(s) "
+                f"depuis {resolved_path}[/dim]"
+            )
 
     # Affichage des filtres actifs
     active_filters = []
@@ -495,6 +533,61 @@ Exemples d'utilisation :
             sys.exit(1)
         services = result
 
+    elif args.ssh_scan:
+        target = args.ssh_scan
+        scan_xml_path = None
+
+        if not args.ssh_user:
+            console.print("[bold red][!] --ssh-scan nécessite --ssh-user.[/bold red]")
+            sys.exit(1)
+
+        ssh_password = args.ssh_pass
+        if not ssh_password and not args.ssh_key:
+            # Pas de password ni de clé fournis : tente l'agent/clé par défaut,
+            # avec fallback sur un prompt masqué si la connexion échoue.
+            console.print(
+                "[dim][*] Aucun --ssh-pass/--ssh-key fourni, tentative via clé SSH par défaut...[/dim]"
+            )
+
+        console.print(f"\n[cyan][*] Scan authentifié SSH sur [bold]{target}[/bold] "
+                      f"(user: {args.ssh_user})...[/cyan]")
+
+        try:
+            packages, distro = collect_packages_ssh(
+                host=target,
+                username=args.ssh_user,
+                password=ssh_password,
+                key_filename=args.ssh_key,
+                port=args.ssh_port,
+            )
+        except SSHCredentialError as e:
+            console.print(f"[bold red][!] {e}[/bold red]")
+            # Fallback : prompt masqué si rien n'avait été fourni du tout
+            if not ssh_password and not args.ssh_key:
+                ssh_password = getpass.getpass(f"Mot de passe SSH pour {args.ssh_user}@{target} : ")
+                try:
+                    packages, distro = collect_packages_ssh(
+                        host=target, username=args.ssh_user,
+                        password=ssh_password, port=args.ssh_port,
+                    )
+                except (SSHCredentialError, SSHConnectionError) as e2:
+                    console.print(f"[bold red][!] {e2}[/bold red]")
+                    sys.exit(1)
+            else:
+                sys.exit(1)
+        except SSHConnectionError as e:
+            console.print(f"[bold red][!] {e}[/bold red]")
+            sys.exit(1)
+        except RuntimeError as e:
+            console.print(f"[bold red][!] {e}[/bold red]")
+            sys.exit(1)
+
+        console.print(
+            f"[green][+] Distribution détectée : [bold]{distro}[/bold] — "
+            f"{len(packages)} paquet(s) installé(s)[/green]"
+        )
+        services = packages_to_services(packages, target)
+
     if not services:
         console.print("[yellow][!] Aucun service ouvert trouvé dans le scan.[/yellow]")
         sys.exit(0)
@@ -505,6 +598,8 @@ Exemples d'utilisation :
     results = []
     scan_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     use_api = not args.no_api
+    total_ignored_hits = 0
+    unmatched_services = []  # services dont le nom n'a matché aucun alias SERVICE_ALIASES
 
     with Progress(
         SpinnerColumn(),
@@ -518,8 +613,18 @@ Exemples d'utilisation :
             progress.update(task, description=f"Analyse {svc.service_name}:{svc.port}...")
             cves = get_cves_for_service(svc.service_name, svc.banner, use_api_fallback=use_api)
 
+            if args.verbose:
+                service_key = extract_service_key(svc.service_name, svc.banner)
+                if service_key is None:
+                    unmatched_services.append(svc)
+
             # Filtrage combiné (CVSS + sévérité)
             cves = filter_cves(cves, args.min_cvss, severity_filter, after_year=args.after_year)
+
+            # Whitelist .chocoscanignore (CVE déjà traitées / faux positifs connus)
+            if ignored_cves:
+                cves, skipped = filter_ignored(cves, ignored_cves)
+                total_ignored_hits += skipped
 
             if args.exploits:
                 for c in cves:
@@ -546,6 +651,25 @@ Exemples d'utilisation :
 
     # Affichage terminal
     display_results_terminal(results, show_exploits=args.exploits, top_cves=args.top_cves)
+
+    if total_ignored_hits > 0:
+        console.print(
+            f"[dim]({total_ignored_hits} CVE masquée(s) par la whitelist .chocoscanignore)[/dim]"
+        )
+
+    if args.verbose and unmatched_services:
+        console.print(
+            f"\n[yellow][!] {len(unmatched_services)} service(s) non couvert(s) par la base locale "
+            f"(aucun alias dans SERVICE_ALIASES, fallback API NVD utilisé) :[/yellow]"
+        )
+        for svc in unmatched_services:
+            label = svc.service_name or "(nom de service vide)"
+            extra = f" — {svc.banner}" if svc.banner and svc.banner != label else ""
+            console.print(f"  [dim]•[/dim] {svc.host}:{svc.port}/{svc.protocol}  [bold]{label}[/bold]{extra}")
+        console.print(
+            "[dim]  → Ajoutez ces services à SERVICE_ALIASES (modules/cve_matcher.py) "
+            "pour les couvrir par la base locale.[/dim]"
+        )
 
     # ── Mode interactif ─────────────────────────────────────────────────────
     if args.interactive:

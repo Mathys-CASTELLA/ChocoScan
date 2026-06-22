@@ -358,7 +358,7 @@ def export_html(results: list, output_file: str, target: str, scan_date: str, ch
       top: 0;
       z-index: 100;
     }}
-    .logo-wrap img {{ height: 44px; width: auto; display: block; }}
+    .logo-wrap img {{ height: 72px; width: auto; display: block; }}
     .topbar-meta {{
       display: flex;
       gap: 2rem;

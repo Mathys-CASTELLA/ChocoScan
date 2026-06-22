@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,300;0,14..32,400;0,14..32,500;0,14..32,600;1,14..32,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  body {
+    background-color: #09090b;
+    color: #f4f4f5;
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Scrollbar discrète */
+  ::-webkit-scrollbar       { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 99px; }
+  ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+
+  /* Sélection */
+  ::selection { background: #6366f1/25; }
+}
+
+@layer components {
+  .card {
+    @apply bg-choco-surface border border-choco-border rounded-xl p-5;
+  }
+
+  /* Bouton principal — fond indigo */
+  .btn-primary {
+    @apply inline-flex items-center gap-1.5
+           bg-choco-accent hover:bg-choco-accent-dim
+           text-white font-medium
+           px-3.5 py-1.5 rounded-lg
+           text-sm transition-colors duration-150
+           focus:outline-none focus:ring-2 focus:ring-choco-accent/40;
+  }
+
+  /* Bouton secondaire — outline sobre */
+  .btn-ghost {
+    @apply inline-flex items-center gap-1.5
+           border border-choco-border
+           hover:border-zinc-500 hover:bg-choco-surface2
+           text-choco-text-dim hover:text-choco-text
+           px-3.5 py-1.5 rounded-lg
+           text-sm transition-colors duration-150
+           focus:outline-none focus:ring-2 focus:ring-choco-border;
+  }
+
+  /* Champ de saisie */
+  .input {
+    @apply bg-choco-surface2 border border-choco-border rounded-lg
+           px-3 py-1.5 text-sm text-choco-text
+           placeholder-choco-muted
+           focus:outline-none focus:ring-1 focus:ring-choco-accent focus:border-choco-accent
+           transition-colors duration-150;
+  }
+
+  /* Petits tags */
+  .tag {
+    @apply inline-flex items-center
+           px-2 py-0.5 rounded-md
+           text-xs font-medium
+           bg-choco-surface2 border border-choco-border
+           text-choco-text-dim;
+  }
+}
