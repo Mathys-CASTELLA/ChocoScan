@@ -167,35 +167,6 @@ Format--input-formatNmap XML / textenmap_xml · nmap_textMasscan XML / JSON / te
 
 La détection est automatique (--input-format auto par défaut).
 
-
-Architecture
-
-chocoscan/
-├── chocoscan.py              # Point d'entrée CLI
-├── modules/
-│   ├── cve_matcher.py        # Moteur de matching CVE + API NVD
-│   ├── cpe_resolver.py       # Résolution CPE (statique + API)
-│   ├── version_checker.py    # Comparaison de versions
-│   ├── contextual_scorer.py  # Scoring contextuel
-│   ├── chain_analyzer.py     # Chaînes d'exploitation
-│   ├── credentialed_scan.py  # Scan SSH authentifié
-│   ├── ignore_list.py        # Whitelist .chocoscanignore
-│   ├── ad_detector.py        # Détection AD
-│   ├── bloodhound_integration.py
-│   ├── diff_engine.py        # Comparaison de scans
-│   ├── report_generator.py   # Exports HTML / JSON
-│   └── ...
-├── web/
-│   ├── app.py                # FastAPI
-│   ├── database.py           # SQLite async
-│   ├── routers/              # Endpoints REST
-│   └── frontend/             # React + TypeScript + Tailwind
-├── data/
-│   ├── cve_db.json           # Base CVE locale (~145 services)
-│   └── cve_recent.json
-└── assets/                   # Logo CLI, images rapports
-
-
 Options CLI — référence rapide
 
 Modes de scan
