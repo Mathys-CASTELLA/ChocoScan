@@ -4,9 +4,16 @@ import type { CVE } from '../types'
 
 interface Props { cve: CVE }
 
+function copyToClipboard(text: string) {
+  navigator.clipboard?.writeText(text).catch(() => {})
+}
+
 export function CVECard({ cve }: Props) {
   const [expanded, setExpanded] = useState(false)
+  const [copied, setCopied] = useState<string | null>(null)
   const cvss = typeof cve.cvss === 'number' ? cve.cvss.toFixed(1) : cve.cvss
+
+  const hasMsf = cve.msf_modules && cve.msf_modules.length > 0
 
   return (
     <div
@@ -35,6 +42,13 @@ export function CVECard({ cve }: Props) {
             <span className="px-1.5 py-px text-[10px] font-medium rounded-md
                              bg-orange-500/10 border border-orange-500/20 text-orange-400 tracking-wide">
               PoC
+            </span>
+          )}
+          {hasMsf && (
+            <span className="px-1.5 py-px text-[10px] font-semibold rounded-md
+                             bg-blue-500/10 border border-blue-500/20 text-blue-400 tracking-wide"
+                  title={cve.msf_modules![0].path}>
+              MSF{cve.msf_modules!.length > 1 ? ` ×${cve.msf_modules!.length}` : ''}
             </span>
           )}
           {cve.contextual_score != null && (
@@ -80,6 +94,34 @@ export function CVECard({ cve }: Props) {
           {cve.tags.length > 0 && (
             <div className="flex gap-1.5 flex-wrap">
               {cve.tags.map(tag => <span key={tag} className="tag">{tag}</span>)}
+            </div>
+          )}
+
+          {hasMsf && (
+            <div className="space-y-2">
+              <p className="text-choco-muted text-xs font-medium">Modules Metasploit</p>
+              {cve.msf_modules!.map((mod, idx) => (
+                <div key={idx} className="bg-choco-surface rounded-lg p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide ${
+                      {'excellent':'text-green-400','great':'text-green-400','good':'text-yellow-400'}[mod.rank] || 'text-zinc-400'
+                    }`}>{mod.rank}</span>
+                    <span className="text-[10px] text-choco-muted uppercase">{mod.type}</span>
+                    <span className="text-[11px] text-choco-text-dim truncate flex-1">{mod.description}</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-choco-bg rounded px-2 py-1.5">
+                    <code className="text-xs text-blue-400 font-mono flex-1 truncate">use {mod.path}</code>
+                    <button
+                      onClick={e => { e.stopPropagation(); copyToClipboard(`use ${mod.path}`); setCopied(`${idx}`); setTimeout(() => setCopied(null), 1500) }}
+                      className="text-[10px] text-choco-muted hover:text-choco-accent transition-colors flex-shrink-0 font-medium">
+                      {copied === `${idx}` ? '✓' : 'Copier'}
+                    </button>
+                  </div>
+                  {mod.needs_lhost && (
+                    <p className="text-[10px] text-orange-400 opacity-70">Necessite LHOST (reverse shell)</p>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 

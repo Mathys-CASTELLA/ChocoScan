@@ -28,6 +28,7 @@ class CVESchema(BaseModel):
     exploit_available: bool           = False
     contextual_score: float | None    = None
     exploits:        list[dict]       = Field(default_factory=list)
+    msf_modules:     list[dict]       = Field(default_factory=list)
     cpe:             str | None       = None
 
     model_config = {"extra": "ignore"}

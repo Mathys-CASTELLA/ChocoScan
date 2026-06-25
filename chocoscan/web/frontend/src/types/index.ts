@@ -13,6 +13,7 @@ export interface CVE {
   exploit_available: boolean
   contextual_score: number | null
   exploits: { url: string; title?: string }[]
+  msf_modules: { path: string; type: string; rank: string; description: string; needs_lhost: boolean }[]
   cpe: string | null
 }
 

@@ -22,6 +22,7 @@ from modules.cve_matcher import get_cves_for_service, extract_service_key, filte
 from modules.contextual_scorer import inject_scores
 from modules.ignore_list import load_ignore_list, filter_ignored
 from modules.credentialed_scan import collect_packages_ssh, packages_to_services
+from modules.msf_mapper import get_msf_modules
 
 from web.models import (
     CVESchema, ServiceResult, ScanStats, ScanFilters
@@ -40,6 +41,14 @@ def _build_cve_schema(raw: dict) -> CVESchema:
     except (TypeError, ValueError):
         cvss = "N/A"
 
+    # Modules MSF — enrichissement automatique pour toutes les CVE
+    msf_mods = get_msf_modules(raw.get("id", ""), use_github=False, use_searchsploit=False)
+    msf_list = raw.get("msf_modules") or [
+        {"path": m.path, "type": m.type, "rank": m.rank,
+         "description": m.description, "needs_lhost": m.needs_lhost}
+        for m in msf_mods
+    ]
+
     return CVESchema(
         id=raw.get("id", ""),
         description=raw.get("description", ""),
@@ -53,6 +62,7 @@ def _build_cve_schema(raw: dict) -> CVESchema:
         exploit_available=raw.get("exploit_available", False),
         contextual_score=raw.get("contextual_score"),
         exploits=raw.get("exploits", []),
+        msf_modules=msf_list,
         cpe=raw.get("cpe"),
     )
 
