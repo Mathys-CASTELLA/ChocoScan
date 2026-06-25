@@ -1,7 +1,6 @@
 <div align="center">
 
-<img width="637" height="425" alt="chocoscan_cli" src="https://github.com/user-attachments/assets/b9af71b9-5259-49d0-82e8-d5a1352bf147" />
-
+<img src="assets/chocoscan_cli.png" alt="ChocoScan Logo" width="220"/>
 
 # ChocoScan
 
@@ -11,8 +10,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-Frontend-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![NVD](https://img.shields.io/badge/Source-NVD%20%2B%20CISA%20KEV-red?style=flat-square)](https://nvd.nist.gov)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-*Développé par [Mathys CASTELLA](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
+*Développé par [Kinder-Bueno](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
 
 </div>
 
