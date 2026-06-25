@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/chocoscan_cli.png" alt="ChocoScan" width="220"/>
+<img width="637" height="425" alt="image" src="https://github.com/user-attachments/assets/c477bc29-21a8-4e3f-bfbb-3ff66656fd00" />
 
 # ChocoScan
 
@@ -10,10 +10,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-Frontend-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![NVD](https://img.shields.io/badge/Source-NVD%20%2B%20CISA%20KEV-red?style=flat-square)](https://nvd.nist.gov)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![CTF](https://img.shields.io/badge/CTF-HackTheBox%20%7C%20Root--Me-brightgreen?style=flat-square)](https://hackthebox.com)
 
-*Développé par [Kinder-Bueno (Mathys CASTELLA)](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
+*Développé par [Mathys CASTELLA](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
 
 </div>
 
