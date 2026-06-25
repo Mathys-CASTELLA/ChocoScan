@@ -23,6 +23,12 @@ Touches de navigation :
   Entrée        ouvrir / dépiler
   Echap / q     remonter d'un niveau
   Tab           basculer entre les panneaux
+
+Vue Modules (nouveau) :
+  M            → Ouvrir la vue des modules recommandés
+  ↑↓/jk        → Naviguer dans la liste des modules
+  Entrée        → Exécuter le module sélectionné et afficher le résultat
+  Esc / q       → Revenir à la vue précédente
 """
 
 from __future__ import annotations
@@ -37,7 +43,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 # ─── Constantes de couleurs ───────────────────────────────────────────────────
@@ -60,6 +66,8 @@ class C:
     BANNER      = 13
     BORDER      = 14
     KEY_HINT    = 15
+    MOD_DONE    = 16  # Module exécuté avec succès
+    MOD_SEL     = 17  # Ligne sélectionnée vue modules
 
 
 # ─── Tags de marquage ─────────────────────────────────────────────────────────
@@ -86,6 +94,21 @@ TAG_ICONS = {
 }
 
 
+
+# ─── Module Suggestions ───────────────────────────────────────────────────────
+
+@dataclass
+class ModuleSuggestion:
+    """Représente un module recommandé pour les services détectés dans le scan."""
+    key:      str          # "web" | "smb" | "brute" | "pivot" | "container" | "tokens"
+    icon:     str          # Icône ASCII/unicode
+    title:    str          # Titre lisible
+    trigger:  str          # Raison de la recommandation (port/service détecté)
+    cli_flag: str          # Flag CLI équivalent (ex: --smb)
+    status:   str = "pending"  # pending | running | done | error
+    output:   list = field(default_factory=list)   # list[tuple[str, int]]
+
+
 # ─── État global de l'UI ──────────────────────────────────────────────────────
 
 @dataclass
@@ -106,6 +129,12 @@ class UIState:
     scroll_detail: int = 0               # scroll dans la vue détail
     status_msg: str = ""                 # message temporaire dans la status bar
     output_dir: Path = field(default_factory=lambda: Path("output"))
+    # ── Module recommendations ──
+    lhost:              str  = ""
+    lport:              int  = 4444
+    module_cursor:      int  = 0
+    module_scroll:      int  = 0
+    module_suggestions: list = field(default_factory=list)
 
     def current_result(self) -> dict:
         return self.results[self.current_port_idx]
@@ -241,6 +270,8 @@ def init_colors():
     curses.init_pair(C.BANNER,      curses.COLOR_MAGENTA, bg)
     curses.init_pair(C.BORDER,      curses.COLOR_CYAN,    bg)
     curses.init_pair(C.KEY_HINT,    curses.COLOR_CYAN,    bg)
+    curses.init_pair(C.MOD_DONE,    curses.COLOR_GREEN,   bg)
+    curses.init_pair(C.MOD_SEL,     curses.COLOR_BLACK,   curses.COLOR_CYAN)
 
 
 # ─── Vue : liste des ports ────────────────────────────────────────────────────
@@ -316,7 +347,7 @@ def draw_ports_view(stdscr, state: UIState):
 
     # ── Status bar ──
     _draw_status_bar(stdscr, state,
-        "[↑↓/jk] Naviguer  [Entrée] Ouvrir  [X] Exporter marquées  [Q] Quitter")
+        "[↑↓/jk] Naviguer  [Entrée] Ouvrir  [M] Modules  [X] Exporter  [Q] Quitter")
 
 
 def _draw_status_bar(stdscr, state: UIState, hints: str):
@@ -644,6 +675,614 @@ def export_tagged(state: UIState) -> str:
     return f"Exporté : {out_path}  ({len(payload)} CVEs)"
 
 
+
+# ─── Moteur de recommandation ────────────────────────────────────────────────
+
+def _recommend_modules(results: list[dict], lhost: str = "", lport: int = 4444) -> list[ModuleSuggestion]:
+    """Analyse les résultats du scan et retourne les modules pertinents."""
+    suggestions: list[ModuleSuggestion] = []
+    ports_open   = {r.get("service", {}).get("port", 0)  for r in results}
+    svc_names    = {(r.get("service", {}).get("service_name", "") or "").lower() for r in results}
+
+    # ── Web payloads ──────────────────────────────────────────────────────────
+    web_ports = sorted(p for p in ports_open if p in (80, 443, 8080, 8443, 8000, 8001, 3000, 5000))
+    has_http  = bool(web_ports) or any("http" in s for s in svc_names)
+    if has_http:
+        trigger = "HTTP sur ports : " + ", ".join(str(p) for p in web_ports) if web_ports else "HTTP détecté"
+        suggestions.append(ModuleSuggestion(
+            key="web", icon="[WEB]", title="Web Payload Generator",
+            trigger=trigger, cli_flag=f"--web-payloads --lhost {lhost or 'LHOST'}",
+        ))
+
+    # ── SMB ───────────────────────────────────────────────────────────────────
+    has_smb = 445 in ports_open or 139 in ports_open or any("smb" in s or "microsoft-ds" in s for s in svc_names)
+    if has_smb:
+        host_smb = next((r["service"].get("host", "") for r in results
+                         if r.get("service", {}).get("port") in (445, 139)), "")
+        suggestions.append(ModuleSuggestion(
+            key="smb", icon="[SMB]", title="SMB Helper + Impacket",
+            trigger=f"SMB détecté → {host_smb}:445", cli_flag="--smb",
+        ))
+
+    # ── Brute force ───────────────────────────────────────────────────────────
+    brute_ports = {22, 21, 80, 443, 445, 3389, 3306, 5432, 5985, 389, 25, 23, 5900}
+    bruteable   = sorted(brute_ports & ports_open)
+    if bruteable:
+        trigger = "Services : " + ", ".join(str(p) for p in bruteable[:5])
+        suggestions.append(ModuleSuggestion(
+            key="brute", icon="[BRF]", title="Brute Force Helper",
+            trigger=trigger, cli_flag="--brute",
+        ))
+
+    # ── Pivot ─────────────────────────────────────────────────────────────────
+    ssh_open = 22 in ports_open or any("ssh" in s for s in svc_names)
+    if ssh_open or len({r.get("service", {}).get("host", "") for r in results}) > 1:
+        trigger = "SSH:22 détecté" if ssh_open else "Multiples hôtes détectés"
+        suggestions.append(ModuleSuggestion(
+            key="pivot", icon="[PIV]", title="Pivot Helper",
+            trigger=trigger, cli_flag=f"--pivot {lhost or 'LHOST'}",
+        ))
+
+    # ── Container escape ──────────────────────────────────────────────────────
+    container_ports = {2375, 2376, 6443, 10250, 9000, 9443}
+    found_ct = sorted(container_ports & ports_open)
+    if found_ct or any(k in " ".join(svc_names) for k in ("docker", "kubernetes", "k8s")):
+        trigger = "Ports conteneurs : " + ", ".join(str(p) for p in found_ct) if found_ct else "Docker/K8s détecté"
+        suggestions.append(ModuleSuggestion(
+            key="container", icon="[CTR]", title="Container Escape",
+            trigger=trigger, cli_flag="--container",
+        ))
+
+    # ── Token helper (Windows) ────────────────────────────────────────────────
+    win_ports = {3389, 5985, 5986, 1433}
+    found_win = sorted(win_ports & ports_open)
+    has_win   = bool(found_win) or any(k in " ".join(svc_names) for k in ("rdp", "winrm", "mssql", "ms-wbt"))
+    if has_win:
+        trigger = "Windows (ports : " + ", ".join(str(p) for p in found_win) + ")" if found_win else "Services Windows détectés"
+        suggestions.append(ModuleSuggestion(
+            key="tokens", icon="[TOK]", title="Token Privilege Helper",
+            trigger=trigger, cli_flag="--tokens",
+        ))
+
+    # ── Cloud enum (si services web ou IPs cloud détectés) ───────────────────
+    cloud_ports = {80, 443, 8080, 8443}
+    has_web = bool(ports_open & cloud_ports)
+    cloud_keywords = ("amazonaws", "azure", "googleapis", "cloudapp", "s3.", "blob")
+    has_cloud_sig  = any(
+        any(kw in (r.get("service", {}).get("banner", "") or "").lower() for kw in cloud_keywords)
+        for r in results
+    )
+    if has_web or has_cloud_sig:
+        trigger = "Signature cloud détectée" if has_cloud_sig else "Services web → SSRF metadata possible"
+        suggestions.append(ModuleSuggestion(
+            key="cloud", icon="[CLD]", title="Cloud Enumeration",
+            trigger=trigger, cli_flag="--cloud",
+        ))
+
+    # ── Lateral movement (si AD/Windows détecté) ─────────────────────────────
+    win_ports = {445, 3389, 5985, 1433, 88, 389, 636}
+    has_windows = bool(ports_open & win_ports)
+    if has_windows:
+        dc_flag = 88 in ports_open and 389 in ports_open
+        trigger = "DC détecté" if dc_flag else f"Windows (ports: {', '.join(str(p) for p in sorted(win_ports & ports_open)[:4])})"
+        suggestions.append(ModuleSuggestion(
+            key="lateral", icon="[LAT]", title="Lateral Movement",
+            trigger=trigger, cli_flag="--lateral",
+        ))
+
+    # ── Wordlist builder (toujours suggéré) ─────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="wordlist", icon="[WLB]", title="Wordlist Builder",
+        trigger=f"Mots extraits : domaine, hostname, produits détectés",
+        cli_flag="--wordlist /tmp/chocoscan_wl.txt",
+    ))
+
+    # Fallback si aucun module suggéré
+    if not suggestions:
+        suggestions.append(ModuleSuggestion(
+            key="brute", icon="[BRF]", title="Brute Force Helper",
+            trigger="Aucun service spécifique détecté — brute force générique",
+            cli_flag="--brute",
+        ))
+
+    return suggestions
+
+
+# ─── Helper : reconstructeur de services ─────────────────────────────────────
+
+def _results_to_services(results: list[dict]) -> list:
+    """Reconstitue des objets pseudo-NmapService depuis les dicts résultats."""
+    class _Svc:
+        __slots__ = ("host","port","protocol","service_name","product","version","banner")
+        def __init__(self, d: dict):
+            self.host         = d.get("host", "")
+            self.port         = d.get("port", 0)
+            self.protocol     = d.get("protocol", "tcp")
+            self.service_name = d.get("service_name", "")
+            self.product      = d.get("product", "")
+            self.version      = d.get("version", "")
+            self.banner       = d.get("banner", "")
+    return [_Svc(r.get("service", {})) for r in results]
+
+
+# ─── Colorisation des lignes ──────────────────────────────────────────────────
+
+def _colorize(line: str) -> int:
+    """Retourne l'indice de couleur C.* adapté au contenu de la ligne."""
+    s = line.lstrip()
+    if not s:
+        return C.NORMAL
+    if s.startswith("── ") or s.startswith("─ "):
+        return C.TITLE
+    if s.startswith("#"):
+        return C.DIM
+    if "[CRITICAL]" in s[:20] or s.startswith("⚠"):
+        return C.CRITICAL
+    if "[HIGH]" in s[:15]:
+        return C.HIGH
+    if s.startswith("•") or s.startswith("Note") or s.startswith("→") or s.startswith("Télécharger"):
+        return C.DIM
+    return C.LOW   # vert pour les commandes
+
+def _text_lines(text: str) -> list[tuple[str, int]]:
+    return [(line, _colorize(line)) for line in text.split("\n")]
+
+
+# ─── Formatters par module ────────────────────────────────────────────────────
+
+def _fmt_web(results) -> list[tuple[str, int]]:
+    if not results:
+        return [("Aucun service HTTP/HTTPS détecté.", C.DIM)]
+    out: list[tuple[str, int]] = []
+    for wp in results:
+        out.append((f"── {wp.protocol.upper()}://{wp.host}:{wp.port}  [{', '.join(wp.detected_tech) or 'stack inconnue'}]", C.TITLE))
+        out.append((f"   OS hint : {wp.os_hint}", C.DIM))
+        out.append(("", C.NORMAL))
+        out.append(("── LFI / Path Traversal", C.HIGH))
+        for p in wp.lfi_payloads[:8]:
+            out.append((f"  {p.payload}", C.LOW))
+            if p.description:
+                out.append((f"    # {p.description}", C.DIM))
+        out.append(("", C.NORMAL))
+        out.append(("── SSTI — Moteurs détectés", C.HIGH))
+        for e in wp.ssti_engines[:4]:
+            out.append((f"  [{e.name}]  tech: {', '.join(e.tech)}", C.MEDIUM))
+            out.append((f"    detect  : {e.detect}", C.LOW))
+            rce_first = next((l for l in e.rce_linux.split("\n") if l.strip() and not l.startswith("#")), "")
+            if rce_first:
+                out.append((f"    rce     : {rce_first}", C.LOW))
+        out.append(("", C.NORMAL))
+        out.append(("── SQLi — DBMS détectés", C.HIGH))
+        for sq in wp.sqli_entries[:3]:
+            out.append((f"  [{sq.dbms}]", C.MEDIUM))
+            first_err = next((l for l in sq.error_based.split("\n") if l.strip() and not l.startswith("#")), "")
+            first_blind = next((l for l in sq.blind_time.split("\n") if l.strip() and not l.startswith("#")), "")
+            if first_err:   out.append((f"    error  : {first_err}", C.LOW))
+            if first_blind: out.append((f"    blind  : {first_blind}", C.LOW))
+        out.append(("", C.NORMAL))
+        out.append(("── sqlmap", C.HIGH))
+        for line in wp.sqlmap_cmds[:6]:
+            out.append((line, _colorize(line)))
+        out.append(("", C.NORMAL))
+    return out
+
+
+def _fmt_smb(result) -> list[tuple[str, int]]:
+    if result is None:
+        return [("Aucun service SMB détecté.", C.DIM)]
+    out: list[tuple[str, int]] = []
+    ctx = result.context
+    out.append((f"SMB : {ctx.host}:{ctx.port}   domaine : {ctx.domain}", C.TITLE))
+    if not ctx.signing:
+        out.append(("[CRITICAL] Signing DÉSACTIVÉ — NTLM relay possible !", C.CRITICAL))
+    if ctx.dc:
+        out.append(("Contrôleur de domaine (port 88+389) → Kerberoasting disponible", C.HIGH))
+    out.append(("", C.NORMAL))
+    sections = [
+        ("Null session",       result.null_session),
+        ("Énumération (auth)", result.enumeration),
+        ("Impacket",           result.impacket),
+        ("Relay NTLM",         result.relay if result.relay_possible else []),
+        ("Pass-the-Hash",      result.pass_the_hash),
+        ("Kerberos",           result.kerberos),
+    ]
+    for title, cmds in sections:
+        if not cmds:
+            continue
+        out.append((f"── {title}", C.TITLE))
+        for cmd in cmds:
+            out.append((f"  {cmd.title}", C.HIGH))
+            for line in cmd.command.split("\n")[:5]:
+                out.append(("    " + line, _colorize(line)))
+            if cmd.notes:
+                out.append((f"    # {cmd.notes[0]}", C.DIM))
+            out.append(("", C.NORMAL))
+    return out
+
+
+def _fmt_brute(results) -> list[tuple[str, int]]:
+    if not results:
+        return [("Aucun service bruteforçable détecté.", C.DIM)]
+    out: list[tuple[str, int]] = []
+    for br in results:
+        out.append((f"── Host : {br.host}", C.TITLE))
+        for cmd in br.commands:
+            out.append((f"  [{cmd.tool.upper()}] {cmd.title}", C.HIGH))
+            first_cmd = next((l for l in cmd.command.split("\n") if l.strip() and not l.startswith("#")), "")
+            if first_cmd:
+                out.append((f"    {first_cmd}", C.LOW))
+            if cmd.notes:
+                out.append((f"    # {cmd.notes[0]}", C.DIM))
+            out.append(("", C.NORMAL))
+        for note in br.notes[:2]:
+            out.append((f"  # {note}", C.DIM))
+    return out
+
+
+def _fmt_pivot(result) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    out.append((f"── Pivot → {result.target}   LHOST : {result.lhost}", C.TITLE))
+    out.append((f"   SSH : {'ouvert' if result.ssh_available else 'non détecté'}   "
+                f"Réseaux internes : {', '.join(result.internal_nets) or 'aucun détecté'}", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── Quick start", C.HIGH))
+    for line in result.quick_start.split("\n"):
+        out.append((line, _colorize(line)))
+    out.append(("", C.NORMAL))
+    for guide in result.guides:
+        out.append((f"── {guide.title}", C.TITLE))
+        out.append((f"   {guide.description}", C.DIM))
+        for line in guide.attacker[:6]:
+            out.append(("  " + line, _colorize(line)))
+        if guide.target:
+            out.append(("  # — sur la cible :", C.DIM))
+            for line in guide.target[:4]:
+                out.append(("  " + line, _colorize(line)))
+        out.append(("", C.NORMAL))
+    for note in result.notes[:3]:
+        out.append((f"  # {note}", C.DIM))
+    return out
+
+
+def _fmt_container(checks, ext_checks) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    if ext_checks:
+        out.append(("── Services conteneurs exposés (attaque externe)", C.CRITICAL))
+        for ec in ext_checks:
+            out.append((f"  [{ec.severity.upper()}] {ec.title}", C.CRITICAL if ec.severity == "critical" else C.HIGH))
+            for line in ec.command.split("\n")[:5]:
+                out.append(("    " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+    out.append(("── Checklist shell interne", C.TITLE))
+    for check in checks:
+        sev_c = {"critical": C.CRITICAL, "high": C.HIGH, "medium": C.MEDIUM}.get(check.severity, C.DIM)
+        out.append((f"  [{check.severity.upper()}] {check.title}", sev_c))
+        out.append((f"    # {check.description[:90]}", C.DIM))
+        for line in check.check_cmd.split("\n")[:3]:
+            out.append(("    " + line, _colorize(line)))
+        exploit_lines = [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")]
+        for line in exploit_lines[:2]:
+            out.append(("    " + line, C.LOW))
+        out.append(("", C.NORMAL))
+    return out
+
+
+def _fmt_tokens(checks) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    cat_current = ""
+    cat_labels = {
+        "potato": "Potato Attacks (SeImpersonate → SYSTEM direct)",
+        "debug":  "SeDebugPrivilege — LSASS dump",
+        "ownership": "SeTakeOwnershipPrivilege",
+        "backup":    "SeBackupPrivilege / SeRestorePrivilege",
+        "driver":    "SeLoadDriverPrivilege — BYOVD",
+        "misc":      "Autres (AlwaysInstallElevated, Incognito, winPEAS)",
+    }
+    for check in checks:
+        if check.category != cat_current:
+            cat_current = check.category
+            out.append((f"── {cat_labels.get(check.category, check.category)}", C.TITLE))
+        sev_c = {"critical": C.CRITICAL, "high": C.HIGH}.get(check.severity, C.MEDIUM)
+        out.append((f"  [{check.severity.upper()}] {check.title}", sev_c))
+        out.append((f"    # privilege : {check.privilege}", C.DIM))
+        for line in check.check_cmd.split("\n")[:3]:
+            out.append(("    " + line, _colorize(line)))
+        exploit_lines = [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")]
+        for line in exploit_lines[:3]:
+            out.append(("    " + line, C.LOW))
+        out.append(("", C.NORMAL))
+    return out
+
+
+
+
+
+
+def _fmt_cloud(result) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    prov = ", ".join(result.detected_providers).upper() or "GÉNÉRIQUE"
+    out.append((f"Cloud Enum — {result.target}  providers: {prov}", C.TITLE))
+    out.append((f"  SSRF context: {'oui → tester metadata services' if result.ssrf_context else 'non détecté'}", C.HIGH if result.ssrf_context else C.DIM))
+    out.append((f"  {len(result.checks)} checks disponibles", C.DIM))
+    if result.bucket_candidates:
+        out.append((f"  Candidats buckets: {', '.join(result.bucket_candidates[:6])}", C.DIM))
+    out.append(("", C.NORMAL))
+    cat_labels = {
+        "storage": "Stockage (S3 / Blob / GCS)",
+        "iam":     "IAM & Credentials",
+        "metadata":"Metadata Service via SSRF",
+        "secrets": "Secrets & Tokens leakés",
+        "misc":    "Outils multi-cloud",
+    }
+    prov_colors = {"aws": C.HIGH, "azure": C.TITLE, "gcp": C.CRITICAL, "generic": C.MEDIUM}
+    current_cat = ""
+    for check in result.checks:
+        if check.category != current_cat:
+            current_cat = check.category
+            col = prov_colors.get(check.provider, C.MEDIUM)
+            out.append((f"── [{check.provider.upper()}] {cat_labels.get(check.category, check.category)}", col))
+        sev_c = {"critical": C.CRITICAL, "high": C.HIGH}.get(check.severity, C.MEDIUM)
+        out.append((f"  [{check.severity.upper()}] {check.title}", sev_c))
+        out.append((f"    # {check.description[:90]}", C.DIM))
+        for line in [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:3]:
+            out.append(("    " + line, C.LOW))
+        if check.notes:
+            out.append((f"    # {check.notes[0]}", C.DIM))
+        out.append(("", C.NORMAL))
+    for note in result.notes[:5]:
+        out.append((f"# {note}", C.DIM))
+    return out
+
+def _fmt_lateral(result) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    out.append((f"Lateral Movement — domaine: {result.domain}  cible: {result.target}", C.TITLE))
+    flags = []
+    if result.dc_detected:    flags.append("DC détecté")
+    if result.mssql_detected: flags.append("MSSQL détecté")
+    if result.rdp_detected:   flags.append("RDP détecté")
+    out.append((f"  Contexte : {' | '.join(flags) or 'générique Windows'}", C.HIGH))
+    out.append((f"  {len(result.techniques)} techniques disponibles", C.DIM))
+    out.append(("", C.NORMAL))
+    cat_labels = {
+        "dcom": "DCOM", "wmi": "WMI natif", "mssql": "MSSQL Linked Servers",
+        "laps": "LAPS", "delegation": "Délégation Kerberos",
+        "coercion": "Coercition NTLM", "adcs": "AD CS / certipy",
+        "shadow": "Shadow Credentials", "rdp": "RDP Hijacking",
+    }
+    current_cat = ""
+    for tech in result.techniques:
+        if tech.category != current_cat:
+            current_cat = tech.category
+            out.append((f"── {cat_labels.get(tech.category, tech.category)}", C.TITLE))
+        sev_c = {"critical": C.CRITICAL, "high": C.HIGH}.get(tech.severity, C.MEDIUM)
+        out.append((f"  [{tech.severity.upper()}] {tech.title}", sev_c))
+        out.append((f"    # {tech.description[:90]}", C.DIM))
+        for line in tech.check_cmd.split("\n")[:2]:
+            out.append(("    " + line, _colorize(line)))
+        for line in [l for l in tech.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:3]:
+            out.append(("    " + line, C.LOW))
+        if tech.notes:
+            out.append((f"    # {tech.notes[0]}", C.DIM))
+        out.append(("", C.NORMAL))
+    return out
+
+def _fmt_wordlist(result) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    s = result.stats
+    out.append((f"Wordlist — {result.target}  domaine: {result.domain or 'N/A'}  société: {result.company or 'N/A'}", C.TITLE))
+    out.append((f"  {s['base_words']} mots de base  →  {s['total_words']} après mutations", C.HIGH))
+    out.append((f"  avec symbole: {s['words_with_sym']}  avec chiffre: {s['words_with_num']}  min/moy/max: {s['min_len']}/{s['avg_len']}/{s['max_len']} chars", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── Mots de base extraits", C.TITLE))
+    for w in result.base_words[:15]:
+        out.append((f"  {w}", C.LOW))
+    if len(result.base_words) > 15:
+        out.append((f"  ... {len(result.base_words)-15} autres", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── Aperçu wordlist mutée (30 premiers)", C.TITLE))
+    for w in result.all_words[:30]:
+        out.append((f"  {w}", C.LOW))
+    if len(result.all_words) > 30:
+        out.append((f"  ... {len(result.all_words)-30} autres — exporter avec --wordlist /tmp/out.txt", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── CeWL — spider les services web", C.TITLE))
+    for line in result.cewl_cmds[:10]:
+        out.append((line, _colorize(line)))
+    out.append(("", C.NORMAL))
+    out.append(("── Génération usernames", C.TITLE))
+    for line in result.username_cmds[:8]:
+        out.append((line, _colorize(line)))
+    out.append(("", C.NORMAL))
+    out.append(("── Règles hashcat", C.TITLE))
+    for line in result.hashcat_rules[:6]:
+        out.append((line, _colorize(line)))
+    for note in result.notes[:3]:
+        out.append((f"  # {note}", C.DIM))
+    return out
+
+# ─── Exécuteur de module ──────────────────────────────────────────────────────
+
+def _run_module(sugg: ModuleSuggestion, results: list[dict],
+                lhost: str, lport: int) -> None:
+    """Appelle le module correspondant et remplit sugg.output."""
+    sugg.status = "running"
+    try:
+        if sugg.key == "smb":
+            from modules.smb_helper import generate_smb_commands
+            sugg.output = _fmt_smb(generate_smb_commands(results))
+
+        elif sugg.key == "web":
+            from modules.web_payload_gen import analyze_web_payloads
+            svcs = _results_to_services(results)
+            sugg.output = _fmt_web(analyze_web_payloads(svcs, lhost=lhost, lport=lport))
+
+        elif sugg.key == "brute":
+            from modules.brute_helper import generate_brute_commands
+            sugg.output = _fmt_brute(generate_brute_commands(results))
+
+        elif sugg.key == "pivot":
+            from modules.pivot_helper import generate_pivot_commands
+            sugg.output = _fmt_pivot(generate_pivot_commands(results, lhost=lhost, lport=lport))
+
+        elif sugg.key == "container":
+            from modules.container_escape import (get_container_escape_checklist,
+                                                   analyze_container_host)
+            checks = get_container_escape_checklist()
+            ext    = analyze_container_host(results, lhost=lhost)
+            sugg.output = _fmt_container(checks, ext)
+
+        elif sugg.key == "cloud":
+            from modules.cloud_enum import enumerate_cloud
+            sugg.output = _fmt_cloud(enumerate_cloud(results))
+
+        elif sugg.key == "lateral":
+            from modules.lateral_movement import generate_lateral_commands
+            sugg.output = _fmt_lateral(generate_lateral_commands(results))
+
+        elif sugg.key == "wordlist":
+            from modules.wordlist_builder import build_wordlists
+            sugg.output = _fmt_wordlist(build_wordlists(results))
+
+        elif sugg.key == "tokens":
+            from modules.token_helper import get_token_checks
+            sugg.output = _fmt_tokens(get_token_checks())
+
+        else:
+            sugg.output = [("Module non reconnu.", C.DIM)]
+
+        sugg.status = "done"
+
+    except Exception as exc:
+        sugg.output = [
+            ("[ERREUR] Impossible d'exécuter le module.", C.CRITICAL),
+            (str(exc)[:120], C.DIM),
+            ("Vérifier que les modules sont dans modules/", C.DIM),
+        ]
+        sugg.status = "error"
+
+
+# ─── Vue : liste des modules recommandés ─────────────────────────────────────
+
+def draw_modules_view(stdscr, state: UIState) -> None:
+    stdscr.erase()
+    max_y, max_x = stdscr.getmaxyx()
+
+    # ── Header ──
+    addstr_safe(stdscr, 0, 0, " " * max_x, curses.color_pair(C.HEADER) | curses.A_BOLD)
+    addstr_safe(stdscr, 0, 2,
+                " ChocoScan  ›  Modules recommandés ",
+                curses.color_pair(C.HEADER) | curses.A_BOLD)
+    n_done = sum(1 for s in state.module_suggestions if s.status == "done")
+    info_r = f" {len(state.module_suggestions)} modules | {n_done} exécutés "
+    addstr_safe(stdscr, 0, max_x - len(info_r) - 1,
+                info_r, curses.color_pair(C.HEADER))
+
+    # ── Sous-titre ──
+    lhost_info = f"LHOST : {state.lhost or '(non défini — utiliser --lhost)'}  "
+    addstr_safe(stdscr, 1, 2, lhost_info, curses.color_pair(C.DIM))
+    if not state.lhost:
+        addstr_safe(stdscr, 1, 2 + len(lhost_info),
+                    "→ passer --lhost 10.x.x.x pour les modules qui en ont besoin",
+                    curses.color_pair(C.HIGH))
+    hline_safe(stdscr, 2, 0, curses.ACS_HLINE, max_x, curses.color_pair(C.BORDER))
+
+    # ── Colonne header ──
+    col_h = f"  {'#':<3} {'ICÔNE':<6} {'MODULE':<28} {'DÉCLENCHEUR':<32} STATUT"
+    addstr_safe(stdscr, 3, 0, col_h[:max_x], curses.A_DIM)
+    hline_safe(stdscr, 4, 0, curses.ACS_HLINE, max_x, curses.color_pair(C.BORDER))
+
+    # ── Liste ──
+    suggestions = state.module_suggestions
+    n      = len(suggestions)
+    list_h = max_y - 8
+    scroll = max(0, state.module_cursor - list_h + 3)
+    scroll = min(scroll, max(0, n - list_h))
+
+    for i, sugg in enumerate(suggestions[scroll:scroll + list_h]):
+        real_idx = i + scroll
+        is_sel   = (real_idx == state.module_cursor)
+        y        = 5 + i
+
+        if is_sel:
+            addstr_safe(stdscr, y, 0, " " * max_x, curses.color_pair(C.MOD_SEL))
+
+        sel_char = "▶" if is_sel else " "
+        num_str  = f"{real_idx + 1:<3}"
+
+        status_text, status_col = {
+            "pending": ("● Prêt",    C.DIM),
+            "running": ("⟳ En cours", C.MEDIUM),
+            "done":    ("✓ Exécuté", C.MOD_DONE),
+            "error":   ("✗ Erreur",  C.CRITICAL),
+        }.get(sugg.status, ("? Inconnu", C.DIM))
+
+        base_attr = curses.color_pair(C.MOD_SEL) | curses.A_BOLD if is_sel else curses.color_pair(C.NORMAL)
+        st_attr   = (curses.color_pair(C.MOD_SEL) | curses.A_BOLD) if is_sel else (curses.color_pair(status_col) | curses.A_BOLD)
+
+        row = f" {sel_char} {num_str} {sugg.icon:<6} {sugg.title:<28} {sugg.trigger[:31]:<32}"
+        addstr_safe(stdscr, y, 0, row[:max_x - 14], base_attr)
+        addstr_safe(stdscr, y, max_x - 13, f" {status_text:<12}", st_attr)
+
+    hline_safe(stdscr, max_y - 3, 0, curses.ACS_HLINE, max_x, curses.color_pair(C.BORDER))
+
+    # ── Astuce CLI ──
+    if 0 <= state.module_cursor < len(suggestions):
+        cli_hint = f"  Équivalent CLI : python3 chocoscan.py -x scan.xml {suggestions[state.module_cursor].cli_flag}"
+        addstr_safe(stdscr, max_y - 2, 0, cli_hint[:max_x - 1], curses.color_pair(C.DIM))
+
+    _draw_status_bar(stdscr, state,
+        "[↑↓/jk] Naviguer  [Entrée] Exécuter+Afficher  [Esc/Q] Retour ports")
+
+
+# ─── Vue : résultat d'un module ───────────────────────────────────────────────
+
+def draw_module_output_view(stdscr, state: UIState) -> None:
+    stdscr.erase()
+    max_y, max_x = stdscr.getmaxyx()
+
+    if not (0 <= state.module_cursor < len(state.module_suggestions)):
+        return
+    sugg = state.module_suggestions[state.module_cursor]
+
+    # ── Header ──
+    addstr_safe(stdscr, 0, 0, " " * max_x, curses.color_pair(C.HEADER) | curses.A_BOLD)
+    header = f" ChocoScan  ›  Modules  ›  {sugg.title} "
+    addstr_safe(stdscr, 0, 2, header, curses.color_pair(C.HEADER) | curses.A_BOLD)
+    addstr_safe(stdscr, 0, max_x - 22,
+                f" CLI: {sugg.cli_flag[:16]} ", curses.color_pair(C.HEADER))
+    hline_safe(stdscr, 1, 0, curses.ACS_HLINE, max_x, curses.color_pair(C.BORDER))
+
+    lines = sugg.output
+    n_lines  = len(lines)
+    content_h = max_y - 4
+    max_scroll = max(0, n_lines - content_h)
+    state.module_scroll = clamp(state.module_scroll, 0, max_scroll)
+
+    if not lines:
+        addstr_safe(stdscr, 3, 2, "Aucun résultat.", curses.color_pair(C.DIM))
+    else:
+        for i, (text, color_id) in enumerate(lines[state.module_scroll:state.module_scroll + content_h]):
+            attr = curses.color_pair(color_id)
+            if color_id in (C.TITLE,):
+                attr |= curses.A_BOLD
+            addstr_safe(stdscr, 2 + i, 0, text[:max_x - 1], attr)
+
+    # ── Indicateur de scroll ──
+    if n_lines > content_h:
+        pct = int((state.module_scroll / max_scroll) * 100) if max_scroll else 100
+        nav = f"  ligne {state.module_scroll + 1}/{n_lines}  ({pct}%)  "
+        addstr_safe(stdscr, max_y - 2, 2, nav, curses.color_pair(C.DIM))
+        # Mini scrollbar
+        bar_h  = content_h
+        bar_y  = int((state.module_scroll / max(1, max_scroll)) * (bar_h - 1))
+        for sy in range(bar_h):
+            ch = "█" if sy == bar_y else "│"
+            addstr_safe(stdscr, 2 + sy, max_x - 1, ch, curses.color_pair(C.BORDER))
+
+    _draw_status_bar(stdscr, state,
+        "[↑↓/jk] Scroll  [PgUp/PgDn] Page  [Esc/Q] Retour modules")
+
+
 # ─── Saisie de filtre inline ──────────────────────────────────────────────────
 
 def prompt_filter(stdscr, state: UIState):
@@ -679,7 +1318,8 @@ def prompt_filter(stdscr, state: UIState):
 
 # ─── Boucle principale ────────────────────────────────────────────────────────
 
-def run_interactive(results: list[dict], output_dir: str = "output"):
+def run_interactive(results: list[dict], output_dir: str = "output",
+                    lhost: str = "", lport: int = 4444):
     """Point d'entrée public — lance le TUI interactif."""
     if not results:
         print("[!] Aucun résultat à afficher en mode interactif.")
@@ -694,9 +1334,12 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
         init_colors()
 
         state = UIState(
-            results    = results,
-            tags       = {},
-            output_dir = Path(output_dir),
+            results             = results,
+            tags                = {},
+            output_dir          = Path(output_dir),
+            lhost               = lhost,
+            lport               = lport,
+            module_suggestions  = _recommend_modules(results, lhost, lport),
         )
 
         while True:
@@ -709,6 +1352,10 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                 draw_cves_view(stdscr, state)
             elif state.view == "detail":
                 draw_detail_view(stdscr, state)
+            elif state.view == "modules":
+                draw_modules_view(stdscr, state)
+            elif state.view == "module_output":
+                draw_module_output_view(stdscr, state)
 
             stdscr.refresh()
 
@@ -725,6 +1372,11 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     state.view = "ports"
                 elif state.view == "detail":
                     state.view = "cves"
+                elif state.view == "modules":
+                    state.view = "ports"
+                elif state.view == "module_output":
+                    state.view = "modules"
+                    state.module_scroll = 0
 
             elif ch in (27,):  # Escape
                 if state.view == "cves":
@@ -732,6 +1384,11 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                 elif state.view == "detail":
                     state.view = "cves"
                     state.scroll_detail = 0
+                elif state.view == "modules":
+                    state.view = "ports"
+                elif state.view == "module_output":
+                    state.view = "modules"
+                    state.module_scroll = 0
 
             # ── Touches de navigation ──
             elif ch in (curses.KEY_UP, ord('k')):
@@ -742,6 +1399,10 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     state.cve_cursor = clamp(state.cve_cursor - 1, 0, max(0, n_cves - 1))
                 elif state.view == "detail":
                     state.scroll_detail = max(0, state.scroll_detail - 1)
+                elif state.view == "modules":
+                    state.module_cursor = clamp(state.module_cursor - 1, 0, max(0, len(state.module_suggestions) - 1))
+                elif state.view == "module_output":
+                    state.module_scroll = max(0, state.module_scroll - 1)
 
             elif ch in (curses.KEY_DOWN, ord('j')):
                 if state.view == "ports":
@@ -751,6 +1412,10 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     state.cve_cursor = clamp(state.cve_cursor + 1, 0, max(0, n_cves - 1))
                 elif state.view == "detail":
                     state.scroll_detail += 1  # clamp appliqué au rendu
+                elif state.view == "modules":
+                    state.module_cursor = clamp(state.module_cursor + 1, 0, max(0, len(state.module_suggestions) - 1))
+                elif state.view == "module_output":
+                    state.module_scroll += 1  # clamp dans draw_module_output_view
 
             elif ch in (curses.KEY_PPAGE,):  # Page Up
                 if state.view == "ports":
@@ -760,6 +1425,10 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     state.cve_cursor = clamp(state.cve_cursor - 10, 0, max(0, n_cves - 1))
                 elif state.view == "detail":
                     state.scroll_detail = max(0, state.scroll_detail - 10)
+                elif state.view in ("modules",):
+                    state.module_cursor = clamp(state.module_cursor - 5, 0, max(0, len(state.module_suggestions) - 1))
+                elif state.view == "module_output":
+                    state.module_scroll = max(0, state.module_scroll - 15)
 
             elif ch in (curses.KEY_NPAGE,):  # Page Down
                 if state.view == "ports":
@@ -769,6 +1438,10 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     state.cve_cursor = clamp(state.cve_cursor + 10, 0, max(0, n_cves - 1))
                 elif state.view == "detail":
                     state.scroll_detail += 10
+                elif state.view in ("modules",):
+                    state.module_cursor = clamp(state.module_cursor + 5, 0, max(0, len(state.module_suggestions) - 1))
+                elif state.view == "module_output":
+                    state.module_scroll += 15
 
             elif ch in (curses.KEY_HOME, ord('g')):
                 if state.view == "ports":   state.port_cursor = 0
@@ -792,6 +1465,16 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
                     if cves:
                         state.scroll_detail = 0
                         state.view          = "detail"
+                elif state.view == "modules":
+                    if 0 <= state.module_cursor < len(state.module_suggestions):
+                        sugg = state.module_suggestions[state.module_cursor]
+                        if sugg.status != "done":
+                            state.status_msg = f"  Exécution : {sugg.title}..."
+                            draw_modules_view(stdscr, state)
+                            stdscr.refresh()
+                            _run_module(sugg, state.results, state.lhost, state.lport)
+                        state.module_scroll = 0
+                        state.view = "module_output"
 
             # ── Actions de marquage (disponibles depuis cves et detail) ──
             elif ch in (ord('e'), ord('E')) and state.view in ("cves", "detail"):
@@ -853,6 +1536,13 @@ def run_interactive(results: list[dict], output_dir: str = "output"):
             elif ch in (ord('x'), ord('X')):
                 msg = export_tagged(state)
                 state.status_msg = f"  {msg}"
+
+            # ── Touche M → vue modules recommandés ──
+            elif ch in (ord('m'), ord('M')):
+                if state.view != "modules" and state.view != "module_output":
+                    state.view = "modules"
+                elif state.view == "module_output":
+                    state.view = "modules"
 
             # ── Redimensionnement terminal ──
             elif ch == curses.KEY_RESIZE:
