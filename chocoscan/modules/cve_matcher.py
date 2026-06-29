@@ -208,6 +208,25 @@ SERVICE_ALIASES = {
     "winrm": "winrm",
     "wsman": "winrm",
     "gitea": "gitea",
+
+    # ── Ajouts web_fingerprinter ────────────────────────────────────────────
+    "craft cms":       "craft_cms",
+    "craftcms":        "craft_cms",
+    "craft_cms":       "craft_cms",
+    "x-craft-version": "craft_cms",
+    "nextcloud":       "nextcloud",
+    "phpmyadmin":      "phpmyadmin",
+    "webmin":          "webmin",
+    "concrete5":       "concrete5",
+    "concrete cms":    "concrete5",
+    "opencart":        "opencart",
+    "ghost":           "ghost",
+    "wagtail":         "wagtail",
+    "laravel":         "laravel",
+    "django":          "django",
+    "angular":         "angular",
+    "spring":          "spring",
+    "spring boot":     "spring",
     "gogs": "gogs",
     "nfs": "nfs",
     "nfsd": "nfs",
@@ -665,6 +684,67 @@ SERVICE_ALIASES = {
     "triton": "tensorflow",
     "openwebui": "tensorflow",
     "langchain": "tensorflow",
+
+    # ── Services critiques HTB ────────────────────────────────────────────────
+    # Privilege escalation Linux
+    "sudo":              "sudo",
+    "sudoedit":          "sudo",
+    "polkit":            "polkit",
+    "pkexec":            "polkit",
+    "policykit":         "polkit",
+    "linux kernel":      "linux_kernel",
+    "linux_kernel":      "linux_kernel",
+    "gnu bash":          "bash",
+    "gnu screen":        "screen",
+    # FTP
+    "vsftpd":            "vsftpd",
+    "proftpd":           "proftpd",
+    "pure-ftpd":         "pure_ftpd",
+    "pureftpd":          "pure_ftpd",
+    # Mail
+    "exim":              "exim",
+    "exim4":             "exim",
+    "postfix":           "postfix",
+    "dovecot":           "dovecot",
+    "sendmail":          "sendmail",
+    "zimbra":            "zimbra",
+    # OpenSSL
+    "openssl":           "openssl",
+    "libssl":            "openssl",
+    # Frameworks web
+    "rails":             "rails",
+    "ruby on rails":     "rails",
+    "flask":             "flask",
+    "werkzeug":          "flask",
+    "nodejs":            "nodejs",
+    "node.js":           "nodejs",
+    "node":              "nodejs",
+    "symfony":           "symfony",
+    # Médias
+    "imagemagick":       "imagemagick",
+    "imagick":           "imagemagick",
+    "ghostscript":       "ghostscript",
+    # Réseau
+    "cups":              "cups",
+    "rsync":             "rsync",
+    "named":             "bind",
+    "openldap":          "ldap",
+    "squid":             "squid",
+    "haproxy":           "haproxy",
+    "lighttpd":          "lighttpd",
+    "tigervnc":          "vnc",
+    "tightvnc":          "vnc",
+    "libvncserver":      "vnc",
+    # Containers
+    "runc":              "runc",
+    "containerd":        "containerd",
+    # DB
+    "couchdb":           "couchdb",
+    "apache couchdb":    "couchdb",
+    "memcached":         "memcached",
+    "microsoft sql server": "mssql",
+    "ms-sql-s":          "mssql",
+    "ms-sql":            "mssql",
 }
 
 LOCAL_PRIVESC_SERVICES = [

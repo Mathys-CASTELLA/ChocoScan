@@ -28068,5 +28068,76 @@
         "web"
       ]
     }
+  ],
+  "craft_cms": [
+    {
+      "id": "CVE-2025-32432",
+      "description": "Craft CMS RCE non authentifiée via /actions/assets/generate-transform. Code Injection (CWE-94), CISA KEV. Branches affectées : 3.x < 3.9.15, 4.x < 4.14.15, 5.x < 5.6.17.",
+      "cvss": 10.0,
+      "severity": "CRITICAL",
+      "published": "2025-04-25",
+      "kev": true,
+      "tags": [
+        "rce",
+        "unauthenticated",
+        "kev-listed",
+        "actively-exploited"
+      ],
+      "affected_versions": [
+        "< 5.6.17"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2025-32432",
+        "https://craftcms.com/knowledge-base/craft-cms-cve-2025-32432",
+        "https://sensepost.com/blog/2025/investigating-an-in-the-wild-campaign-using-rce-in-craftcms"
+      ],
+      "exploit_refs": [
+        "https://github.com/craftcms/cms/security/advisories/GHSA-f3gw-9ww9-jmc3"
+      ],
+      "fix": "Mettre à jour vers Craft CMS 3.9.15, 4.14.15 ou 5.6.17",
+      "cpe": "cpe:2.3:a:craftcms:craft_cms:*:*:*:*:*:*:*:*"
+    },
+    {
+      "id": "CVE-2023-41892",
+      "description": "Craft CMS RCE via Twig SSTI. Attaquant authentifié peut exécuter du code arbitraire.",
+      "cvss": 9.8,
+      "severity": "CRITICAL",
+      "published": "2023-09-15",
+      "kev": false,
+      "tags": [
+        "rce",
+        "ssti",
+        "authenticated"
+      ],
+      "affected_versions": [
+        "< 4.4.15"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2023-41892"
+      ],
+      "exploit_refs": [
+        "https://github.com/craftcms/cms/security/advisories/GHSA-4w8r-3xrw-v25g"
+      ],
+      "cpe": "cpe:2.3:a:craftcms:craft_cms:*:*:*:*:*:*:*:*"
+    },
+    {
+      "id": "CVE-2024-56145",
+      "description": "Craft CMS XSS stored via file upload dans l'interface admin.",
+      "cvss": 8.2,
+      "severity": "HIGH",
+      "published": "2024-12-18",
+      "kev": false,
+      "tags": [
+        "xss",
+        "stored"
+      ],
+      "affected_versions": [
+        "< 5.5.2"
+      ],
+      "references": [
+        "https://nvd.nist.gov/vuln/detail/CVE-2024-56145"
+      ],
+      "cpe": "cpe:2.3:a:craftcms:craft_cms:*:*:*:*:*:*:*:*"
+    }
   ]
 }

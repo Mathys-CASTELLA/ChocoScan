@@ -66,11 +66,17 @@ from modules.pivot_helper    import generate_pivot_commands
 from modules.cipher_decoder  import analyze_cipher
 from modules.brute_helper    import generate_brute_commands
 from modules.smb_helper      import generate_smb_commands
+from modules.subdomain_enum  import (enumerate_subdomains,
+                                      display_subdomain_results,
+                                      subdomain_results_to_html_section)
 from modules.token_helper     import (get_token_checks,
                                        get_checks_for_privilege,
                                        analyze_whoami_priv)
 from modules.cloud_enum         import enumerate_cloud, get_all_cloud_checks
 from modules.lateral_movement  import generate_lateral_commands, get_all_lateral_techniques
+from modules.web_fingerprinter import (fingerprint_all,
+                                        fingerprints_to_synthetic_results)
+from update_db               import auto_fetch_if_missing, auto_fetch_service
 from modules.wordlist_builder import build_wordlists
 from modules.container_escape import (get_container_escape_checklist,
                                        get_quick_container_checks,
@@ -244,6 +250,9 @@ def display_results_terminal(results: list, show_exploits: bool = False, top_cve
             border_style="dim",
             expand=False,
         )
+        # Fallback si _new_cves_session non défini (chemins alternatifs)
+        if "_new_cves_session" not in dir():
+            _new_cves_session = set()
         table.add_column("CVE ID", style="bold magenta", min_width=18)
         table.add_column("Sévérité", justify="center", min_width=10)
         table.add_column("CVSS", justify="center", min_width=6)
@@ -293,8 +302,15 @@ def display_results_terminal(results: list, show_exploits: bool = False, top_cve
             else:
                 ctx_cell  = "[dim]—[/dim]"
 
+            _cve_id   = cve.get("id", "N/A")
+            _is_new   = _cve_id in _new_cves_session
+            _id_cell  = (
+                f"[bold bright_cyan]{_cve_id}[/bold bright_cyan] "
+                f"[on dark_blue bold bright_cyan] ✦ NEW [/on dark_blue bold bright_cyan]"
+                if _is_new else _cve_id
+            )
             row = [
-                cve.get("id", "N/A"),
+                _id_cell,
                 f"[{style_severity(sev)}]{sev}[/{style_severity(sev)}]",
                 f"[{style_cvss(score)}]{score}[/{style_cvss(score)}]",
                 ctx_cell,
@@ -499,340 +515,6 @@ Exemples d'utilisation :
                         help="Affiche les services dont le nom n'a matché aucun alias connu "
                              "(diagnostic des trous de couverture de la base locale)")
 
-    # ── Token Privilege Helper ───────────────────────────────────────────────
-    if args.tokens is not None:
-        whoami_input = args.tokens if args.tokens not in ("all", None) else ""
-        checks = analyze_whoami_priv(whoami_input) if whoami_input else get_token_checks()
-
-        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
-        console.print(f"[bold yellow]  TOKEN PRIVILEGE HELPER — Windows[/bold yellow]")
-        console.print(f"[bold yellow]{'='*62}[/bold yellow]")
-
-        if whoami_input:
-            console.print(f"  [dim]Filtré sur les privilèges détectés dans whoami /priv[/dim]")
-        else:
-            console.print(f"  [dim]{len(checks)} checks — tous les token privileges Windows[/dim]")
-        console.print(f"  [dim]Commencer par : whoami /priv  puis  whoami /groups[/dim]")
-
-        cat_colors = {
-            "potato":    "red",
-            "debug":     "magenta",
-            "ownership": "yellow",
-            "backup":    "cyan",
-            "driver":    "blue",
-            "misc":      "green",
-        }
-        cat_labels = {
-            "potato":    "Potato Attacks (SeImpersonate / SeAssignPrimaryToken)",
-            "debug":     "SeDebugPrivilege — LSASS dump",
-            "ownership": "SeTakeOwnershipPrivilege",
-            "backup":    "SeBackupPrivilege / SeRestorePrivilege",
-            "driver":    "SeLoadDriverPrivilege — BYOVD",
-            "misc":      "Autres techniques (AlwaysInstallElevated, Incognito...)",
-        }
-
-        current_cat = ""
-        for check in checks:
-            if check.category != current_cat:
-                current_cat = check.category
-                col = cat_colors.get(check.category, "white")
-                label = cat_labels.get(check.category, check.category)
-                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
-
-            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(
-                check.severity, "white"
-            )
-            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(
-                check.difficulty, "white"
-            )
-            priv_tag = (f" [dim]← {check.privilege}[/dim]"
-                        if check.privilege != "*" else "")
-            console.print(
-                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
-                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
-                f"[bold]{check.title}[/bold]{priv_tag}"
-            )
-            console.print(f"  [dim]{check.description[:130]}[/dim]")
-
-            console.print(f"  [dim]Check :[/dim]")
-            for line in check.check_cmd.split("\n")[:3]:
-                if line.startswith("#"):
-                    console.print(f"  [dim]{line}[/dim]")
-                elif line.strip():
-                    console.print(f"  [green]{line}[/green]")
-
-            console.print(f"  [dim]Exploit :[/dim]")
-            exploit_lines = [l for l in check.exploit_cmd.split("\n")
-                             if l.strip() and not l.startswith("#")]
-            for line in exploit_lines[:4]:
-                console.print(f"  [yellow]{line}[/yellow]")
-
-            for note in check.notes[:1]:
-                console.print(f"  [dim]• {note}[/dim]")
-
-        console.print(f"\n[bold yellow]{'='*62}[/bold yellow]")
-        console.print(f"[dim]→ --tokens 'SeImpersonatePrivilege  Enabled\n...' pour filtrer[/dim]")
-        console.print(f"[dim]→ Télécharger GodPotato : https://github.com/BeichenDream/GodPotato[/dim]\n")
-
-    # ── Cloud Enum ────────────────────────────────────────────────────────────
-    if args.cloud:
-        cloud = enumerate_cloud(results)
-
-        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
-        console.print(f"[bold cyan]  CLOUD ENUMERATION[/bold cyan]")
-        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
-
-        prov_str = ", ".join(cloud.detected_providers).upper() or "générique"
-        console.print(f"  Providers : [yellow]{prov_str}[/yellow]")
-        console.print(f"  SSRF context : {'[green]oui — tester metadata services[/green]' if cloud.ssrf_context else '[dim]non détecté[/dim]'}")
-        console.print(f"  Checks : [yellow]{len(cloud.checks)}[/yellow]")
-
-        if cloud.bucket_candidates:
-            console.print(f"  Candidats buckets : [dim]{', '.join(cloud.bucket_candidates[:6])}...[/dim]")
-
-        prov_colors = {"aws": "yellow", "azure": "blue", "gcp": "red", "generic": "cyan"}
-        cat_labels  = {
-            "storage": "Stockage (S3 / Blob / GCS)",
-            "iam":     "IAM & Credentials",
-            "metadata":"Metadata Service (SSRF)",
-            "secrets": "Secrets & Tokens",
-            "misc":    "Outils multi-cloud",
-        }
-        current_cat = ""
-        for check in cloud.checks:
-            if check.category != current_cat:
-                current_cat = check.category
-                col = prov_colors.get(check.provider, "white")
-                console.print(f"\n[bold {col}]── [{check.provider.upper()}] {cat_labels.get(check.category, check.category)}[/bold {col}]")
-
-            sev_col = {"critical": "red", "high": "yellow"}.get(check.severity, "blue")
-            console.print(f"\n  [{sev_col}][{check.severity.upper()}][/{sev_col}]  [bold]{check.title}[/bold]")
-            console.print(f"  [dim]{check.description[:110]}[/dim]")
-            for line in [l for l in check.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
-                console.print(f"  [green]{line}[/green]")
-            for note in check.notes[:1]:
-                console.print(f"  [dim]• {note}[/dim]")
-
-        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
-        for note in cloud.notes[:6]:
-            console.print(f"  [dim]{note}[/dim]")
-        console.print("")
-
-    # ── Lateral Movement ─────────────────────────────────────────────────────
-    if args.lateral:
-        lat = generate_lateral_commands(results)
-
-        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
-        console.print(f"[bold magenta]  LATERAL MOVEMENT — {lat.domain}[/bold magenta]")
-        console.print(f"[bold magenta]{'='*62}[/bold magenta]")
-        console.print(f"  DC détecté    : {'[green]oui[/green]' if lat.dc_detected else '[dim]non[/dim]'}")
-        console.print(f"  MSSQL détecté : {'[green]oui[/green]' if lat.mssql_detected else '[dim]non[/dim]'}")
-        console.print(f"  RDP détecté   : {'[green]oui[/green]' if lat.rdp_detected else '[dim]non[/dim]'}")
-        console.print(f"  Techniques    : [yellow]{len(lat.techniques)}[/yellow]")
-
-        cat_labels = {
-            "dcom":       ("DCOM",                          "cyan"),
-            "wmi":        ("WMI natif",                     "blue"),
-            "mssql":      ("MSSQL Linked Servers",          "yellow"),
-            "laps":       ("LAPS",                          "green"),
-            "delegation": ("Délégation Kerberos",           "red"),
-            "coercion":   ("Coercition NTLM",               "bold red"),
-            "adcs":       ("AD CS — Certificate Services",  "bold yellow"),
-            "shadow":     ("Shadow Credentials",            "magenta"),
-            "rdp":        ("RDP Hijacking",                 "blue"),
-        }
-        current_cat = ""
-        for tech in lat.techniques:
-            if tech.category != current_cat:
-                current_cat = tech.category
-                label, col = cat_labels.get(tech.category, (tech.category, "white"))
-                console.print(f"\n[bold {col}]── {label}[/bold {col}]")
-
-            sev_col  = {"critical": "red", "high": "yellow"}.get(tech.severity, "blue")
-            diff_col = {"easy": "green", "medium": "yellow", "hard": "red"}.get(tech.difficulty, "white")
-            console.print(
-                f"\n  [{sev_col}][{tech.severity.upper()}][/{sev_col}] "
-                f"[{diff_col}]{tech.difficulty}[/{diff_col}]  [bold]{tech.title}[/bold]"
-            )
-            console.print(f"  [dim]{tech.description[:120]}[/dim]")
-            console.print(f"  [dim]Check :[/dim]")
-            for line in tech.check_cmd.split("\n")[:3]:
-                console.print(f"  [dim]{line}[/dim]" if line.startswith("#") else f"  [green]{line}[/green]")
-            console.print(f"  [dim]Exploit :[/dim]")
-            for line in [l for l in tech.exploit_cmd.split("\n") if l.strip() and not l.startswith("#")][:4]:
-                console.print(f"  [yellow]{line}[/yellow]")
-            for note in tech.notes[:1]:
-                console.print(f"  [dim]• {note}[/dim]")
-
-        console.print(f"\n[bold magenta]{'='*62}[/bold magenta]")
-        for note in lat.notes[:5]:
-            console.print(f"  [dim]{note}[/dim]")
-        console.print("")
-
-    # ── Wordlist Builder ──────────────────────────────────────────────────────
-    if args.wordlist is not None:
-        _wl_out = (args.wordlist
-                   if args.wordlist not in ("auto", None)
-                   else "")
-        _wl_result = build_wordlists(
-            results,
-            output_file=_wl_out,
-            custom_words=getattr(args, "custom_words", []) or [],
-        )
-
-        console.print(f"\n[bold green]{'='*62}[/bold green]")
-        console.print(f"[bold green]  WORDLIST BUILDER[/bold green]")
-        console.print(f"[bold green]{'='*62}[/bold green]")
-
-        s = _wl_result.stats
-        console.print(f"  Cible   : [cyan]{_wl_result.target}[/cyan]")
-        if _wl_result.domain:
-            console.print(f"  Domaine : [cyan]{_wl_result.domain}[/cyan]")
-        if _wl_result.company:
-            console.print(f"  Société : [cyan]{_wl_result.company}[/cyan]")
-        console.print(f"\n  [bold]Statistiques[/bold]")
-        console.print(f"  Mots de base   : [yellow]{s['base_words']}[/yellow]")
-        console.print(f"  Total (mutés)  : [green]{s['total_words']}[/green]")
-        console.print(f"  Avec symbole   : {s['words_with_sym']}  |  Avec chiffre : {s['words_with_num']}")
-        console.print(f"  Longueur       : min={s['min_len']} / moy={s['avg_len']} / max={s['max_len']}")
-        console.print(f"  Mots ≥8 chars  : {s['words_gte8']}")
-
-        # Aperçu
-        console.print(f"\n  [bold]Mots de base extraits[/bold]")
-        for w in _wl_result.base_words[:20]:
-            console.print(f"  [dim]{w}[/dim]")
-        if len(_wl_result.base_words) > 20:
-            console.print(f"  [dim]  ... {len(_wl_result.base_words)-20} autres[/dim]")
-
-        console.print(f"\n  [bold]Aperçu wordlist finale (25 premiers mots)[/bold]")
-        for w in _wl_result.all_words[:25]:
-            console.print(f"  [green]{w}[/green]")
-        if len(_wl_result.all_words) > 25:
-            console.print(f"  [dim]  ... {len(_wl_result.all_words)-25} autres[/dim]")
-
-        if _wl_out:
-            console.print(f"\n  [bold green]✓ Wordlist écrite → {_wl_out}[/bold green]  "
-                          f"[dim]({s['total_words']} lignes)[/dim]")
-        else:
-            console.print(f"\n  [dim]→ Ajouter un chemin pour exporter : --wordlist /tmp/cible.txt[/dim]")
-
-        # CeWL
-        console.print(f"\n[bold yellow]── CeWL — Spider web pour enrichir la wordlist[/bold yellow]")
-        for line in _wl_result.cewl_cmds[:12]:
-            if line.startswith("#"):
-                console.print(f"  [dim]{line}[/dim]")
-            elif line.strip():
-                console.print(f"  [green]{line}[/green]")
-            else:
-                console.print("")
-
-        # Usernames
-        console.print(f"\n[bold yellow]── Génération d'usernames[/bold yellow]")
-        for line in _wl_result.username_cmds[:12]:
-            if line.startswith("#"):
-                console.print(f"  [dim]{line}[/dim]")
-            elif line.strip():
-                console.print(f"  [green]{line}[/green]")
-            else:
-                console.print("")
-
-        # Règles hashcat
-        console.print(f"\n[bold yellow]── Règles hashcat[/bold yellow]")
-        for line in _wl_result.hashcat_rules[:8]:
-            if line.startswith("#"):
-                console.print(f"  [dim]{line}[/dim]")
-            elif line.strip():
-                console.print(f"  [green]{line}[/green]")
-            else:
-                console.print("")
-
-        for note in _wl_result.notes:
-            console.print(f"\n  [dim]{note}[/dim]")
-
-        console.print(f"[bold green]{'='*62}[/bold green]\n")
-
-    # ── Container Escape ─────────────────────────────────────────────────────
-    if args.container is not None:
-        quick_mode = (args.container == "quick")
-        checks = get_quick_container_checks() if quick_mode else get_container_escape_checklist()
-
-        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
-        console.print(f"[bold cyan]  CONTAINER ESCAPE{'— Quick' if quick_mode else ''}[/bold cyan]")
-        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
-        console.print(f"  [dim]{len(checks)} vérifications • Exécuter depuis un shell dans le conteneur[/dim]")
-
-        # Analyse du scan pour services conteneurs exposés
-        _lhost_ct = args.lhost or "LHOST"
-        ext_checks = analyze_container_host(results, lhost=_lhost_ct)
-        if ext_checks:
-            console.print(f"\n[bold red]── Services conteneurs exposés ({len(ext_checks)} détecté(s)) ──[/bold red]")
-            for ec in ext_checks:
-                sev_color = "red" if ec.severity == "critical" else "yellow"
-                console.print(f"\n  [{sev_color}][{ec.severity.upper()}][/{sev_color}] [bold]{ec.title}[/bold]")
-                console.print(f"  [dim]{ec.description}[/dim]")
-                for line in ec.command.split("\n")[:6]:
-                    if line.startswith("#"):
-                        console.print(f"  [dim]{line}[/dim]")
-                    elif line.strip():
-                        console.print(f"  [green]{line}[/green]")
-                    else:
-                        console.print("")
-                for note in ec.notes:
-                    console.print(f"  [dim]• {note}[/dim]")
-
-        # Checklist interne
-        cat_colors = {
-            "detect":     "dim",
-            "capability": "red",
-            "socket":     "bold red",
-            "mount":      "yellow",
-            "escape":     "magenta",
-            "kubernetes": "cyan",
-            "cve":        "bold yellow",
-        }
-        current_cat = ""
-        for check in checks:
-            if check.category != current_cat:
-                current_cat = check.category
-                cat_label = {
-                    "detect":     "Détection — suis-je dans un conteneur ?",
-                    "capability": "Capabilities dangereuses",
-                    "socket":     "Docker Socket",
-                    "mount":      "Montages sensibles",
-                    "kubernetes": "Kubernetes",
-                    "cve":        "CVEs connues",
-                }.get(check.category, check.category)
-                col = cat_colors.get(check.category, "white")
-                console.print(f"\n[bold {col}]── {cat_label}[/bold {col}]")
-
-            sev_color = {"critical": "red", "high": "yellow", "medium": "blue"}.get(check.severity, "white")
-            diff_color = {"easy": "green", "medium": "yellow", "hard": "red"}.get(check.difficulty, "white")
-            console.print(
-                f"\n  [{sev_color}][{check.severity.upper()}][/{sev_color}] "
-                f"[{diff_color}]{check.difficulty}[/{diff_color}]  "
-                f"[bold]{check.title}[/bold]"
-            )
-            console.print(f"  [dim]{check.description[:120]}[/dim]")
-            console.print(f"  [dim]Check :[/dim]")
-            for line in check.check_cmd.split("\n")[:3]:
-                if line.startswith("#"):
-                    console.print(f"  [dim]{line}[/dim]")
-                elif line.strip():
-                    console.print(f"  [green]{line}[/green]")
-            console.print(f"  [dim]Exploit :[/dim]")
-            exploit_lines = [l for l in check.exploit_cmd.split("\n")
-                             if l.strip() and not l.startswith("#")]
-            for line in exploit_lines[:3]:
-                console.print(f"  [yellow]{line}[/yellow]")
-            for note in check.notes[:1]:
-                console.print(f"  [dim]• {note}[/dim]")
-
-        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
-        if not quick_mode:
-            console.print(f"[dim]→ --container quick pour les vérifications rapides uniquement[/dim]")
-        console.print(f"[dim]→ deepce.sh automatise la détection : "
-                      f"curl -sL https://github.com/stealthcopter/deepce/raw/main/deepce.sh | sh[/dim]\n")
-
     # ── Web Payload Generator ────────────────────────────────────────────────
     parser.add_argument("--web-payloads", nargs="?", const="auto", metavar="SERVICE:PORT",
                         help="Payloads web offensifs selon le stack détecté "
@@ -864,6 +546,11 @@ Exemples d'utilisation :
                              "coercition (PrinterBug/PetitPotam), AD CS (certipy ESC1/ESC8), "
                              "Shadow Credentials, RDP hijacking. "
                              "Adapté au contexte (DC/MSSQL/RDP détectés).")
+    parser.add_argument("--web-fingerprint", action="store_true",
+                        help="Fingerprinte activement les services web pour identifier "
+                             "le CMS/framework exact (Craft CMS, WordPress, Jenkins...) "
+                             "et retrouver les CVE correspondantes. "
+                             "Résout le problème : nmap voit nginx → ChocoScan ne voit pas Craft CMS.")
     parser.add_argument("--wordlist", nargs="?", const="auto", metavar="OUTPUT",
                         help="Génère une wordlist ciblée depuis le scan : domaine, "
                              "hostname, produits détectés + mutations (années, symboles, "
@@ -881,6 +568,19 @@ Exemples d'utilisation :
     parser.add_argument("--smb", action="store_true",
                         help="Enumération SMB complète + impacket "
                              "(secretsdump, wmiexec, psexec, relay, PTH, Kerberoasting).")
+    parser.add_argument("--subdomain", nargs="?", const="auto", metavar="DOMAIN",
+                        help="Enumération de sous-domaines (passif + bruteforce DNS). "
+                             "Ex: --subdomain target.htb | --subdomain (auto-détecte depuis le scan)")
+    parser.add_argument("--sub-passive", action="store_true",
+                        help="Recon passive uniquement (crt.sh, HackerTarget, RapidDNS). "
+                             "Zéro bruit réseau vers la cible.")
+    parser.add_argument("--sub-active", action="store_true",
+                        help="Bruteforce DNS actif uniquement (pas de recon externe).")
+    parser.add_argument("--sub-threads", type=int, default=30, metavar="N",
+                        help="Threads pour le bruteforce DNS (défaut config/30).")
+    parser.add_argument("--sub-wordlist", default=None, metavar="FILE",
+                        help="Wordlist externe pour le bruteforce. "
+                             "Ex: --sub-wordlist /usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt")
 
     # ── Charger la config ~/.chocoscan.conf ─────────────────────────────────
     _cfg_path = apply_to_parser(parser)
@@ -1085,8 +785,36 @@ Exemples d'utilisation :
     ) as progress:
         task = progress.add_task("Recherche de CVEs...", total=len(services))
 
+        # Cache partagé pour éviter de requêter NVD 2x pour le même service
+        _autofetch_cache: set = set()
+        # Set des CVE IDs nouvellement téléchargés dans cette session
+        _new_cves_session: set = set()
+
         for svc in services:
             progress.update(task, description=f"Analyse {svc.service_name}:{svc.port}...")
+
+            # ── Auto-fetch CVE pour ce service (base vide OU mise à jour) ──
+            if not args.no_api:
+                from modules.cve_matcher import extract_service_key as _esk
+                from modules.cve_matcher import SERVICE_ALIASES as _aliases
+                _skey = _esk(svc.service_name, svc.banner)
+                if _skey:
+                    # Construire les mots-clés depuis SERVICE_SEARCH_TERMS ou le banner
+                    try:
+                        from update_db import SERVICE_SEARCH_TERMS as _sst
+                        _kws = _sst.get(_skey, [svc.product or svc.service_name])
+                    except Exception:
+                        _kws = [svc.product or svc.service_name]
+                    if _kws and _kws[0]:  # ne pas appeler avec un keyword vide
+                        auto_fetch_service(
+                            _skey, _kws,
+                            min_cvss=args.min_cvss or 5.0,
+                            silent=True,
+                            session_cache=_autofetch_cache,
+                            new_cves_out=_new_cves_session,
+                            after_year=getattr(args, 'after_year', None),
+                        )
+
             cves = get_cves_for_service(svc.service_name, svc.banner, use_api_fallback=use_api)
 
             if args.verbose:
@@ -1145,6 +873,53 @@ Exemples d'utilisation :
             f"[dim]({total_ignored_hits} CVE masquée(s) par la whitelist .chocoscanignore)[/dim]"
         )
 
+
+    # ── Affichage détaillé des modules Metasploit ────────────────────────────
+    if args.msf or args.msf_script:
+        _msf_hits: list[tuple[str, str, dict]] = []  # (svc_label, cve_id, msf_mod)
+        for _r in results:
+            _svc  = _r.get("service", {})
+            _label = f"{_svc.get('host','')}:{_svc.get('port','')} {_svc.get('product','') or _svc.get('service_name','')}"
+            for _c in _r.get("cves", []):
+                for _m in _c.get("msf_modules", []):
+                    _msf_hits.append((_label, _c.get("id", ""), _m))
+
+        if _msf_hits:
+            console.print(f"\n[bold blue]{'='*62}[/bold blue]")
+            console.print(f"[bold blue]  MODULES METASPLOIT[/bold blue]")
+            console.print(f"[bold blue]{'='*62}[/bold blue]")
+            _lhost = args.lhost or "LHOST"
+            _lport = getattr(args, 'lport', 4444) or 4444
+
+            for _label, _cve_id, _mod in _msf_hits:
+                _rank_col = {"excellent": "green", "great": "green",
+                             "good": "yellow"}.get(_mod.get("rank", ""), "dim")
+                console.print(
+                    f"\n  [cyan]{_cve_id}[/cyan]  [{_rank_col}]{_mod.get('rank','').upper()}[/{_rank_col}]"
+                    f"  [bold]{_mod.get('description', _mod.get('path',''))}[/bold]"
+                )
+                console.print(f"  [dim]{_label}[/dim]")
+                console.print(f"\n  [green]msfconsole -q[/green]")
+                console.print(f"  [yellow]use {_mod.get('path','')}[/yellow]")
+                console.print(f"  [yellow]set RHOSTS {_svc.get('host', 'TARGET')}[/yellow]")
+                console.print(f"  [yellow]set RPORT {_mod.get('default_rport') or _svc.get('port', '')}[/yellow]")
+                if _mod.get("needs_lhost"):
+                    console.print(f"  [yellow]set LHOST {_lhost}[/yellow]")
+                    console.print(f"  [yellow]set LPORT {_lport}[/yellow]")
+                console.print(f"  [yellow]set VERBOSE true[/yellow]")
+                console.print(f"  [yellow]run[/yellow]")
+
+            console.print(f"\n  [dim]→ --msf-script pour générer un fichier .rc prêt à lancer[/dim]")
+            console.print(f"  [dim]   msfconsole -r chocoscan_msf_TARGET.rc[/dim]")
+            console.print(f"[bold blue]{'='*62}[/bold blue]\n")
+        else:
+            console.print(
+                f"\n[dim][MSF] Aucun module Metasploit trouvé pour les CVE détectées.[/dim]"
+                f"\n[dim]      La table statique couvre ~80 CVE CTF classiques (vsftpd, EternalBlue, Log4Shell...).[/dim]"
+                f"\n[dim]      Pour les CVE récentes, chercher manuellement : msfconsole -q -x 'search {results[0]["cves"][0]["id"] if results and results[0]["cves"] else "CVE-ID"}'[/dim]\n"
+                if results else ""
+            )
+
     # ── Credentials par défaut ────────────────────────────────────────────────
     if args.default_creds:
         results = enrich_results_with_creds(results, target=target)
@@ -1175,7 +950,8 @@ Exemples d'utilisation :
                 host=svc.get("host", ""), port=svc.get("port", 0),
                 protocol=svc.get("protocol", "tcp"), state="open",
                 service_name=svc.get("service_name", ""), product=svc.get("product", ""),
-                version=svc.get("version", ""), banner=svc.get("banner", ""),
+                version=svc.get("version", ""), extrainfo=svc.get("extrainfo", ""),
+                banner=svc.get("banner", ""),
             ))
         misconfig_list = detect_misconfigs(svc_objects)
         if misconfig_list:
@@ -1498,6 +1274,67 @@ Exemples d'utilisation :
             "pour les couvrir par la base locale.[/dim]"
         )
 
+    # ── Web Fingerprinting — enrichissement de results AVANT interactive ───────
+    # Doit tourner avant run_interactive() pour que les CVE applicatives
+    # (Craft CMS, WordPress, Jenkins...) apparaissent dans le mode interactif.
+    if args.web_fingerprint:
+        _fp_all = fingerprint_all(results)
+        for _fp in _fp_all:
+            for _fingerprint in _fp.fingerprints:
+                if not _fingerprint.service_key:
+                    continue
+                _fp_banner = f"{_fingerprint.app_name} {_fingerprint.version}".strip()
+                # Auto-fetch CVE pour l'app détectée
+                try:
+                    _fp_kw = [_fingerprint.app_name, _fingerprint.service_key]
+                    auto_fetch_service(
+                        _fingerprint.service_key, _fp_kw,
+                        min_cvss=5.0, silent=True,
+                        session_cache=_autofetch_cache,
+                        new_cves_out=_new_cves_session,
+                        after_year=getattr(args, 'after_year', None),
+                    )
+                except Exception:
+                    pass
+                # CVE matching pour cette app
+                _fp_cves = get_cves_for_service(
+                    _fingerprint.service_key, _fp_banner,
+                    use_api_fallback=not args.no_api,
+                )
+                _fp_cves = filter_cves(
+                    _fp_cves, args.min_cvss, severity_filter,
+                    after_year=args.after_year,
+                )
+                # Ajouter aux résultats principaux
+                results.append({
+                    "service": {
+                        "host":         _fp.host,
+                        "port":         _fp.port,
+                        "protocol":     _fp.protocol,
+                        "state":        "open",
+                        "service_name": _fingerprint.service_key,
+                        "product":      _fingerprint.app_name,
+                        "version":      _fingerprint.version,
+                        "extrainfo":    f"Web fingerprint ({_fingerprint.confidence})",
+                        "banner":       _fp_banner,
+                    },
+                    "cves": _fp_cves,
+                    "_source": "web_fingerprint",
+                    "_fp_confidence": _fingerprint.confidence,
+                    "_fp_method": _fingerprint.detection_method,
+                })
+                if _fp_cves:
+                    console.print(
+                        f"  [green][WFP][/green] [bold]{_fingerprint.app_name}"
+                        f"{' ' + _fingerprint.version if _fingerprint.version else ''}[/bold]"
+                        f" → [bold red]{len(_fp_cves)} CVE(s)[/bold red]"
+                        + (" dont [bold red]" +
+                           ", ".join(c.get('id','?') for c in _fp_cves
+                                     if float(c.get('cvss',0) or 0) >= 9.0)[:80]
+                           + "[/bold red]"
+                           if any(float(c.get('cvss',0) or 0) >= 9.0 for c in _fp_cves) else "")
+                    )
+
     # ── Mode interactif ─────────────────────────────────────────────────────
     if args.interactive:
         run_interactive(results, output_dir=args.output_dir,
@@ -1766,6 +1603,105 @@ Exemples d'utilisation :
             console.print(f"  [dim]{note}[/dim]")
         console.print("")
 
+    # ── Web Fingerprinter ─────────────────────────────────────────────────────
+    if args.web_fingerprint:
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[bold cyan]  WEB FINGERPRINTER — Détection active des applications[/bold cyan]")
+        console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"  [dim]Fingerprinting en cours... (requêtes HTTP actives)[/dim]")
+
+        _autofetch_cache: set = set()   # cache session partagé
+        _new_cves_session: set = set()   # IDs des CVE nouvelles cette session
+        fp_results = fingerprint_all(results)
+
+        if not fp_results:
+            console.print("  [dim]Aucun service web accessible.[/dim]")
+        else:
+            total_apps = sum(len(fp.fingerprints) for fp in fp_results)
+            console.print(f"  Services web sondés : [yellow]{len(fp_results)}[/yellow]  "
+                          f"Applications détectées : [green]{total_apps}[/green]")
+
+            for fp in fp_results:
+                proto_tag = "[cyan]HTTPS[/cyan]" if fp.protocol == "https" else "[blue]HTTP[/blue]"
+                console.print(f"\n  {proto_tag} [bold]{fp.host}:{fp.port}[/bold]"
+                               + (f"  [dim]({fp.server})[/dim]" if fp.server else "")
+                               + (f"  [dim]« {fp.title} »[/dim]" if fp.title else ""))
+
+                if fp.error:
+                    console.print(f"  [dim]  Erreur : {fp.error}[/dim]")
+                    continue
+
+                if not fp.fingerprints:
+                    console.print(f"  [dim]  Aucune application identifiée (service générique)[/dim]")
+                    continue
+
+                for fingerprint in fp.fingerprints:
+                    conf_col = {"high": "green", "medium": "yellow", "low": "dim"}.get(
+                        fingerprint.confidence, "white"
+                    )
+                    ver_str = f" [dim]{fingerprint.version}[/dim]" if fingerprint.version else ""
+                    console.print(
+                        f"  [{conf_col}]▶[/{conf_col}] [bold]{fingerprint.app_name}[/bold]{ver_str}"
+                        f"  [dim]({fingerprint.confidence} — {fingerprint.detection_method[:60]})[/dim]"
+                    )
+
+                    # ── Auto-fetch CVE si absentes de la base ──────────────────
+                    _kw = [fingerprint.app_name]
+                    if fingerprint.service_key != fingerprint.app_name.lower().replace(' ', '_'):
+                        _kw.append(fingerprint.service_key)
+                    _fetched = auto_fetch_service(
+                        fingerprint.service_key, _kw,
+                        min_cvss=5.0, silent=False,
+                        session_cache=_autofetch_cache,
+                        new_cves_out=_new_cves_session,
+                        after_year=getattr(args, 'after_year', None),
+                    )
+
+                    # CVE matching sur l'app détectée
+                    banner = f"{fingerprint.app_name} {fingerprint.version}".strip()
+                    cves = get_cves_for_service(
+                        fingerprint.service_key, banner,
+                        use_api_fallback=not args.no_api,
+                    )
+
+                    if not cves:
+                        console.print(f"    [dim]Aucune CVE trouvée dans la base locale.[/dim]")
+                        if not fingerprint.version:
+                            console.print(f"    [dim]Conseil : version non détectée → résultats moins précis.[/dim]")
+                    else:
+                        # Trier par CVSS décroissant
+                        cves_sorted = sorted(
+                            cves,
+                            key=lambda c: float(c.get("cvss", 0) or 0),
+                            reverse=True,
+                        )[:args.top_cves]
+
+                        console.print(
+                            f"    [bold red]{len(cves)} CVE(s) trouvée(s)[/bold red]"
+                            f" [dim](top {len(cves_sorted)} affichées)[/dim]"
+                        )
+
+                        for cve in cves_sorted:
+                            cve_id   = cve.get("id", "CVE-????-????")
+                            cvss     = cve.get("cvss", 0) or 0
+                            sev      = cve.get("severity", "UNKNOWN")
+                            desc     = (cve.get("description", "") or "")[:80]
+                            kev      = " [bold red]KEV[/bold red]" if cve.get("kev") else ""
+                            sev_col  = {"CRITICAL": "red", "HIGH": "yellow",
+                                        "MEDIUM": "blue", "LOW": "dim"}.get(sev, "white")
+
+                            console.print(
+                                f"    [{sev_col}]{cve_id}[/{sev_col}]  "
+                                f"[bold]CVSS {cvss:.1f}[/bold]  {sev}{kev}"
+                            )
+                            if desc:
+                                console.print(f"      [dim]{desc}[/dim]")
+
+        console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+        console.print(f"[dim]→ --enum-web pour énumérer les répertoires/fichiers[/dim]")
+        console.print(f"[dim]→ --web-payloads --lhost IP pour générer les payloads d'exploitation[/dim]\n")
+
     # ── Wordlist Builder ──────────────────────────────────────────────────────
     if args.wordlist is not None:
         _wl_out = (args.wordlist
@@ -1941,7 +1877,8 @@ Exemples d'utilisation :
                 host=svc.get("host", ""), port=svc.get("port", 0),
                 protocol=svc.get("protocol", "tcp"), state="open",
                 service_name=svc.get("service_name", ""), product=svc.get("product", ""),
-                version=svc.get("version", ""), banner=svc.get("banner", ""),
+                version=svc.get("version", ""), extrainfo=svc.get("extrainfo", ""),
+                banner=svc.get("banner", ""),
             ))
 
         _lhost_wp = args.lhost or "LHOST"
@@ -2210,6 +2147,88 @@ Exemples d'utilisation :
                         console.print(f"  [dim]• {note}[/dim]")
 
             console.print(f"[bold blue]{'='*62}[/bold blue]\n")
+
+    # ── Subdomain Enumeration ─────────────────────────────────────────────────
+    if args.subdomain:
+        do_passive = not args.sub_active    # passif par défaut sauf --sub-active
+        do_active  = not args.sub_passive   # actif par défaut sauf --sub-passive
+        wordlist_src = args.sub_wordlist or None
+
+        # ── Résolution du domaine cible ──────────────────────────────────────
+        if args.subdomain == "auto":
+            # Extraire les noms d'hôtes depuis les résultats du scan
+            # NmapService.host contient "hostname or host_ip" (voir nmap_parser.py)
+            import re
+            _ip_re = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+            _seen_domains: dict[str, int] = {}
+            for svc in results:
+                h = svc.host.lower().strip()
+                if _ip_re.match(h):
+                    continue  # IP pure, on ignore
+                # Extraire le domaine de base : les deux derniers labels (foo.bar.htb → bar.htb)
+                parts = h.split(".")
+                base = ".".join(parts[-2:]) if len(parts) >= 2 else h
+                _seen_domains[base] = _seen_domains.get(base, 0) + 1
+
+            if not _seen_domains:
+                console.print(
+                    "\n  [yellow]⚠  Mode auto : aucun nom d'hôte trouvé dans le scan.[/yellow]\n"
+                    "  [dim]Spécifie le domaine explicitement : --subdomain target.htb[/dim]\n"
+                )
+            elif len(_seen_domains) == 1:
+                domain = next(iter(_seen_domains))
+                console.print(f"\n  [dim]Auto-détection : domaine trouvé → [bold]{domain}[/bold][/dim]")
+            else:
+                # Plusieurs domaines : prendre le plus fréquent
+                domain = max(_seen_domains, key=_seen_domains.get)
+                others = [d for d in _seen_domains if d != domain]
+                console.print(
+                    f"\n  [dim]Auto-détection : {len(_seen_domains)} domaines trouvés, "
+                    f"utilisation de [bold]{domain}[/bold] "
+                    f"(ignorés : {', '.join(others)})[/dim]\n"
+                    f"  [dim]Pour un autre domaine : --subdomain <DOMAIN>[/dim]"
+                )
+        else:
+            domain = args.subdomain.strip().lower()
+
+        # Sortir proprement si aucun domaine résolu en mode auto
+        if args.subdomain == "auto" and not _seen_domains:
+            pass  # Message déjà affiché ci-dessus
+        else:
+            console.print(f"\n[bold cyan]{'='*62}[/bold cyan]")
+            console.print(f"[bold cyan]  SUBDOMAIN ENUMERATION — {domain}[/bold cyan]")
+            console.print(f"[bold cyan]{'='*62}[/bold cyan]")
+
+            modes = []
+            if do_passive:
+                modes.append("[cyan]passif[/cyan] (crt.sh · HackerTarget · RapidDNS)")
+            if do_active:
+                modes.append("[yellow]actif[/yellow] (bruteforce DNS)")
+            console.print(f"  Modes : {' + '.join(modes)}")
+            if do_active and wordlist_src:
+                console.print(f"  Wordlist : [dim]{wordlist_src}[/dim]")
+            elif do_active:
+                console.print(f"  Wordlist : [dim]embarquée (~250 mots)[/dim]")
+            console.print()
+
+            sub_result = enumerate_subdomains(
+                domain        = domain,
+                passive       = do_passive,
+                active        = do_active,
+                wordlist_path = wordlist_src,
+                threads       = args.sub_threads,
+                verbose       = args.verbose,
+            )
+
+            display_subdomain_results(sub_result, show_commands=True, max_cmds=3)
+
+            if args.export_html and sub_result.subdomains:
+                console.print(
+                    f"\n  [dim]→ Section HTML prête "
+                    f"({len(sub_result.subdomains)} sous-domaines)[/dim]"
+                )
+
+            console.print(f"[bold cyan]{'='*62}[/bold cyan]\n")
 
 if __name__ == "__main__":
     main()

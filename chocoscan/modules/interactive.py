@@ -744,6 +744,14 @@ def _recommend_modules(results: list[dict], lhost: str = "", lport: int = 4444) 
             trigger=trigger, cli_flag="--tokens",
         ))
 
+    # ── Web fingerprinter (si services web détectés) ─────────────────────────
+    if has_http:
+        suggestions.append(ModuleSuggestion(
+            key="webfp", icon="[WFP]", title="Web Fingerprinter",
+            trigger=f"HTTP détecté — identifier le CMS/framework exact",
+            cli_flag="--web-fingerprint",
+        ))
+
     # ── Cloud enum (si services web ou IPs cloud détectés) ───────────────────
     cloud_ports = {80, 443, 8080, 8443}
     has_web = bool(ports_open & cloud_ports)
@@ -761,6 +769,7 @@ def _recommend_modules(results: list[dict], lhost: str = "", lport: int = 4444) 
 
     # ── Lateral movement (si AD/Windows détecté) ─────────────────────────────
     win_ports = {445, 3389, 5985, 1433, 88, 389, 636}
+    dc_flag     = False   # initialisé ici pour éviter UnboundLocalError
     has_windows = bool(ports_open & win_ports)
     if has_windows:
         dc_flag = 88 in ports_open and 389 in ports_open
@@ -776,6 +785,121 @@ def _recommend_modules(results: list[dict], lhost: str = "", lport: int = 4444) 
         trigger=f"Mots extraits : domaine, hostname, produits détectés",
         cli_flag="--wordlist /tmp/chocoscan_wl.txt",
     ))
+
+    # ── AD Enumeration ───────────────────────────────────────────────────────
+    if dc_flag:
+        suggestions.append(ModuleSuggestion(
+            key="adEnum", icon="[AD]", title="AD Enumeration",
+            trigger="DC détecté (Kerberos:88 + LDAP:389)",
+            cli_flag="--ad-enum",
+        ))
+
+    # ── Privesc ───────────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="privesc", icon="[PE]", title="Privesc Checklist",
+        trigger="Windows" if {3389, 5985} & ports_open else "Linux (défaut)",
+        cli_flag="--privesc",
+    ))
+
+    # ── Reverse Shell ─────────────────────────────────────────────────────────
+    if lhost:
+        suggestions.append(ModuleSuggestion(
+            key="revshell", icon="[RS]", title="Reverse Shell Generator",
+            trigger=f"LHOST:{lhost} LPORT:{lport}",
+            cli_flag=f"--revshell --lhost {lhost} --lport {lport}",
+        ))
+
+    # ── Default Credentials ───────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="defcreds", icon="[DC]", title="Default Credentials",
+        trigger=f"{len(results)} service(s) à tester",
+        cli_flag="--default-creds",
+    ))
+
+    # ── Misconfigurations ─────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="misconfig", icon="[MC]", title="Misconfiguration Detector",
+        trigger="Analyse des services détectés",
+        cli_flag="--misconfig",
+    ))
+
+    # ── Kill Chain ────────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="killchain", icon="[KC]", title="Kill Chain (MITRE ATT&CK)",
+        trigger="Visualisation du chemin d'attaque",
+        cli_flag="--kill-chain",
+    ))
+
+    # ── Vhost Discovery ───────────────────────────────────────────────────────
+    if has_http:
+        suggestions.append(ModuleSuggestion(
+            key="vhost", icon="[VH]", title="Vhost Discovery",
+            trigger="HTTP détecté",
+            cli_flag="--vhost",
+        ))
+
+    # ── Web Enumeration ───────────────────────────────────────────────────────
+    if has_http:
+        suggestions.append(ModuleSuggestion(
+            key="enumweb", icon="[EW]", title="Web Enumeration",
+            trigger=f"HTTP sur {', '.join(str(p) for p in web_ports[:3])}",
+            cli_flag="--enum-web",
+        ))
+
+    # ── Shell Upgrader ────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="upgshell", icon="[SU]", title="Shell Upgrader",
+        trigger="Guide upgrade shell → TTY",
+        cli_flag="--upgrade-shell",
+    ))
+
+    # ── Modules avec argument externe (affichage usage) ───────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="hashcrack", icon="[HC]", title="Hash Cracker",
+        trigger="Passer un hash : --hashcrack HASH",
+        cli_flag="--hashcrack <HASH>",
+    ))
+    suggestions.append(ModuleSuggestion(
+        key="bloodhound", icon="[BH]", title="BloodHound Analysis",
+        trigger="Passer un fichier .zip BloodHound",
+        cli_flag="--bloodhound bloodhound.zip",
+    ))
+
+    # ── GTFOBins ──────────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="gtfobins", icon="[GTF]", title="GTFOBins",
+        trigger="Lister SUID/sudo/caps sur la cible",
+        cli_flag="--gtfobins",
+    ))
+
+    # ── Metasploit Mapper ─────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="msf", icon="[MSF]", title="Metasploit Mapper",
+        trigger="Modules MSF pour les CVE détectées",
+        cli_flag="--msf",
+    ))
+
+    # ── Loot Collector ────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="loot", icon="[LT]", title="Loot Collector",
+        trigger="Collecte fichiers sensibles (SSH requis)",
+        cli_flag="--loot --ssh-user USER --ssh-key KEY",
+    ))
+
+    # ── Cipher Decoder ────────────────────────────────────────────────────────
+    suggestions.append(ModuleSuggestion(
+        key="cipher", icon="[CIP]", title="Cipher Decoder",
+        trigger="Décoder un encodage ou hash",
+        cli_flag="--cipher 'TEXTE_A_DECODER'",
+    ))
+
+    # ── Credentialed Scan (SSH) ──────────────────────────────────────────────
+    if 22 in ports_open:
+        suggestions.append(ModuleSuggestion(
+            key="sshscan", icon="[SSH]", title="SSH Credentialed Scan",
+            trigger="SSH:22 détecté — améliore le CVE matching",
+            cli_flag="--ssh-scan TARGET --ssh-user USER --ssh-key KEY",
+        ))
 
     # Fallback si aucun module suggéré
     if not suggestions:
@@ -1033,6 +1157,379 @@ def _fmt_cloud(result) -> list[tuple[str, int]]:
         out.append((f"# {note}", C.DIM))
     return out
 
+
+def _fmt_ad_enum(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.ad_enum import detect_ad_context, build_ad_commands
+        ad = detect_ad_context(results)
+        if not ad:
+            return [("Aucun contexte AD détecté (ports 88+389 requis).", C.DIM)]
+        out.append((f"Active Directory — {ad.domain}  DC: {ad.dc_ip}", C.TITLE))
+        out.append((f"  OS: {ad.os_guess}  Signing SMB: {ad.smb_signing}", C.DIM))
+        out.append(("", C.NORMAL))
+        cmds = build_ad_commands(ad)
+        for section, section_cmds in cmds.items():
+            out.append((f"── {section}", C.TITLE))
+            for cmd_info in section_cmds[:3]:
+                cmd = cmd_info.get("cmd", "") if isinstance(cmd_info, dict) else str(cmd_info)
+                for line in cmd.split("\n")[:3]:
+                    out.append(("  " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur ad_enum: {e}", C.DIM))
+    return out
+
+
+def _fmt_privesc(results, lhost="LHOST") -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.privesc_checker import get_privesc_checklist
+        ports = {r.get("service", {}).get("port", 0) for r in results}
+        os_t = "windows" if {3389, 5985, 1433} & ports else "linux"
+        checks = get_privesc_checklist(os_t)
+        out.append((f"Privesc — {os_t.upper()} — {len(checks)} vecteurs", C.TITLE))
+        out.append(("", C.NORMAL))
+        current_cat = ""
+        for c in checks:
+            if getattr(c, "category", "") != current_cat:
+                current_cat = getattr(c, "category", "")
+                out.append((f"── {current_cat}", C.TITLE))
+            sev_c = {"critical": C.CRITICAL, "high": C.HIGH}.get(getattr(c, "severity", ""), C.MEDIUM)
+            out.append((f"  [{getattr(c, 'severity', '?').upper()}] {getattr(c, 'title', '')}", sev_c))
+            check_cmd = getattr(c, "check_cmd", "") or getattr(c, "cmd", "")
+            for line in check_cmd.split("\n")[:2]:
+                out.append(("    " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur privesc: {e}", C.DIM))
+    return out
+
+
+def _fmt_revshell(lhost="LHOST", lport=4444) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.reverse_shell import build_shells
+        shells = build_shells(lhost, lport)
+        out.append((f"Reverse Shells — LHOST:{lhost} LPORT:{lport}", C.TITLE))
+        out.append((f"  Listener: nc -lvnp {lport}", C.HIGH))
+        out.append(("", C.NORMAL))
+        for sh in shells:
+            lang = getattr(sh, "language", getattr(sh, "name", ""))
+            cmd  = getattr(sh, "payload", getattr(sh, "command", ""))
+            out.append((f"── {lang}", C.TITLE))
+            for line in cmd.split("\n")[:3]:
+                out.append(("  " + line, C.LOW))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur revshell: {e}", C.DIM))
+    return out
+
+
+def _fmt_defcreds(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.default_creds import enrich_results_with_creds
+        enriched = enrich_results_with_creds(results)
+        services_with_creds = [r for r in enriched if r.get("default_creds")]
+        if not services_with_creds:
+            return [("Aucun credentials par défaut trouvés pour les services détectés.", C.DIM)]
+        out.append((f"Credentials par défaut — {len(services_with_creds)} service(s)", C.TITLE))
+        for r in services_with_creds:
+            svc = r.get("service", {})
+            out.append((f"── {svc.get('service_name','')}:{svc.get('port','')} "
+                        f"({svc.get('host','')})", C.HIGH))
+            for cred in r.get("default_creds", []):
+                user = getattr(cred, "username", cred.get("username", "?") if isinstance(cred, dict) else "?")
+                passwd = getattr(cred, "password", cred.get("password", "?") if isinstance(cred, dict) else "?")
+                out.append((f"  {user} : {passwd}", C.LOW))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur default_creds: {e}", C.DIM))
+    return out
+
+
+def _fmt_misconfig(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.misconfig_detector import detect_misconfigs
+        svcs = [type("S", (), {
+            "service_name": r.get("service", {}).get("service_name", ""),
+            "port": r.get("service", {}).get("port", 0),
+            "host": r.get("service", {}).get("host", ""),
+            "banner": r.get("service", {}).get("banner", ""),
+        })() for r in results]
+        misconfigs = detect_misconfigs(svcs)
+        if not misconfigs:
+            return [("Aucune misconfiguration évidente détectée.", C.DIM)]
+        out.append((f"Misconfigurations — {len(misconfigs)} trouvée(s)", C.TITLE))
+        for m in misconfigs:
+            sev_c = {"critical": C.CRITICAL, "high": C.HIGH, "medium": C.MEDIUM}.get(
+                getattr(m, "severity", "").lower(), C.DIM)
+            out.append((f"  [{getattr(m,'severity','?').upper()}] {getattr(m,'title','')}", sev_c))
+            out.append((f"    # {getattr(m,'description','')[:80]}", C.DIM))
+            cmd = getattr(m, "check_cmd", getattr(m, "command", ""))
+            if cmd:
+                out.append(("    " + cmd.split("\n")[0], C.LOW))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur misconfig: {e}", C.DIM))
+    return out
+
+
+def _fmt_killchain(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.kill_chain import generate_kill_chain
+        kc = generate_kill_chain(results)
+        out.append((f"Kill Chain — {getattr(kc, 'target', 'TARGET')}  "
+                    f"OS: {getattr(kc, 'os_guess', '?')}", C.TITLE))
+        out.append(("", C.NORMAL))
+        for step in getattr(kc, "steps", []) or getattr(kc, "attack_steps", []):
+            tactic = getattr(step, "tactic", getattr(step, "phase", ""))
+            title  = getattr(step, "title", getattr(step, "name", ""))
+            sev_c  = C.CRITICAL if "execution" in tactic.lower() or "access" in tactic.lower() else C.HIGH
+            out.append((f"── {tactic}", C.TITLE))
+            out.append((f"  {title}", sev_c))
+            cmd = getattr(step, "command", getattr(step, "cmd", ""))
+            if cmd:
+                for line in cmd.split("\n")[:3]:
+                    out.append(("  " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+        narrative = getattr(kc, "narrative", "")
+        if narrative:
+            out.append(("── Narration", C.TITLE))
+            for line in narrative.split("\n")[:5]:
+                out.append(("  " + line, C.DIM))
+    except Exception as e:
+        out.append((f"Erreur kill_chain: {e}", C.DIM))
+    return out
+
+
+def _fmt_vhost(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.vhost_discovery import analyze_vhosts
+        vhost_result = analyze_vhosts(results)
+        if not vhost_result:
+            return [("Aucun service HTTP détecté pour le vhost discovery.", C.DIM)]
+        targets = getattr(vhost_result, "targets", [vhost_result] if not isinstance(vhost_result, list) else vhost_result)
+        for t in targets:
+            domain = getattr(t, "domain", getattr(t, "base_domain", "?"))
+            out.append((f"── Vhost Discovery — {domain}", C.TITLE))
+            cmds = getattr(t, "commands", [])
+            for cmd_info in cmds:
+                cmd = cmd_info.get("cmd", "") if isinstance(cmd_info, dict) else str(cmd_info)
+                desc = cmd_info.get("description", "") if isinstance(cmd_info, dict) else ""
+                if desc:
+                    out.append((f"  # {desc}", C.DIM))
+                for line in cmd.split("\n")[:3]:
+                    out.append(("  " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur vhost: {e}", C.DIM))
+    return out
+
+
+def _fmt_upgshell(lhost="LHOST", lport=4444) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.shell_upgrader import get_linux_upgrade_guides, get_windows_upgrade_guides
+        out.append(("Shell Upgrader — Linux", C.TITLE))
+        for guide in get_linux_upgrade_guides(lhost, lport):
+            name = getattr(guide, "name", getattr(guide, "method", ""))
+            out.append((f"── {name}", C.HIGH))
+            cmd = getattr(guide, "command", getattr(guide, "cmd", ""))
+            for line in cmd.split("\n")[:4]:
+                out.append(("  " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+        out.append(("Shell Upgrader — Windows", C.TITLE))
+        for guide in get_windows_upgrade_guides(lhost, lport):
+            name = getattr(guide, "name", getattr(guide, "method", ""))
+            out.append((f"── {name}", C.HIGH))
+            cmd = getattr(guide, "command", getattr(guide, "cmd", ""))
+            for line in cmd.split("\n")[:3]:
+                out.append(("  " + line, _colorize(line)))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur shell_upgrader: {e}", C.DIM))
+    return out
+
+
+def _fmt_enumweb(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.web_enumerator import detect_stacks, build_wordlist
+        web_svcs = [r for r in results
+                    if r.get("service", {}).get("port", 0) in (80, 443, 8080, 8443, 8000, 3000)
+                    or "http" in (r.get("service", {}).get("service_name", "") or "").lower()]
+        if not web_svcs:
+            return [("Aucun service web détecté.", C.DIM)]
+        for r in web_svcs:
+            svc = r.get("service", {})
+            stacks = detect_stacks(svc.get("service_name", ""), svc.get("banner", ""), svc.get("port", 80))
+            wl = build_wordlist(stacks)
+            host = svc.get("host", "TARGET")
+            port = svc.get("port", 80)
+            proto = "https" if port in (443, 8443) else "http"
+            out.append((f"── {proto}://{host}:{port}  stacks: {', '.join(stacks) or 'générique'}", C.TITLE))
+            out.append(("  # Feroxbuster :", C.DIM))
+            out.append((f"  feroxbuster -u {proto}://{host}:{port} "
+                        f"-w /usr/share/seclists/Discovery/Web-Content/raft-medium-files.txt", C.LOW))
+            out.append(("  # Gobuster :", C.DIM))
+            out.append((f"  gobuster dir -u {proto}://{host}:{port} "
+                        f"-w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt", C.LOW))
+            if wl:
+                out.append(("  # Wordlist ciblée (stack détectée) :", C.DIM))
+                for w in wl[:5]:
+                    out.append((f"    {w}", C.DIM))
+            out.append(("", C.NORMAL))
+    except Exception as e:
+        out.append((f"Erreur enumweb: {e}", C.DIM))
+    return out
+
+
+
+def _fmt_gtfobins() -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    out.append(("GTFOBins — Binaires SUID / Sudo / Capabilities", C.TITLE))
+    out.append(("  Nécessite un shell sur la cible pour lister les binaires.", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── Commandes de détection (à lancer sur la cible)", C.TITLE))
+    checks = [
+        ("SUID",         "find / -perm -4000 -type f 2>/dev/null"),
+        ("Sudo -l",      "sudo -l"),
+        ("Capabilities", "getcap -r / 2>/dev/null"),
+        ("SGID",         "find / -perm -2000 -type f 2>/dev/null"),
+        ("World-write",  "find / -writable -type f 2>/dev/null | grep -v proc"),
+    ]
+    for label, cmd in checks:
+        out.append((f"  # {label} :", C.DIM))
+        out.append((f"  {cmd}", C.LOW))
+    out.append(("", C.NORMAL))
+    out.append(("── Référence web", C.TITLE))
+    out.append(("  https://gtfobins.github.io", C.LOW))
+    out.append(("  # Une fois les binaires listés, utiliser :", C.DIM))
+    out.append(("  python3 chocoscan.py -x scan.xml --gtfobins", C.LOW))
+    out.append(("  # (après scan SSH authentifié avec --ssh-scan)", C.DIM))
+    return out
+
+
+def _fmt_msf(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    try:
+        from modules.msf_mapper import get_msf_modules
+        # Collecter les CVE critiques/high depuis les résultats
+        cve_ids = []
+        for r in results:
+            for cve in r.get("cves", []):
+                if cve.get("cvss", 0) >= 7.0:
+                    cve_ids.append(cve.get("id", ""))
+        cve_ids = list(dict.fromkeys(cve_ids))[:10]  # dédupliquer, max 10
+        if not cve_ids:
+            return [
+                ("Metasploit Mapper", C.TITLE),
+                ("  Aucune CVE CVSS ≥ 7.0 détectée dans les résultats.", C.DIM),
+                ("  Lancer d'abord le scan pour avoir des CVE.", C.DIM),
+                ("", C.NORMAL),
+                ("  Usage direct :", C.HIGH),
+                ("  python3 chocoscan.py -x scan.xml --msf", C.LOW),
+            ]
+        out.append((f"Metasploit Mapper — {len(cve_ids)} CVE(s) testées", C.TITLE))
+        found = 0
+        for cve_id in cve_ids:
+            mods = get_msf_modules(cve_id, use_github=False, use_searchsploit=True)
+            if mods:
+                found += len(mods)
+                out.append((f"── {cve_id}  ({len(mods)} module(s))", C.HIGH))
+                for m in mods[:2]:
+                    path  = getattr(m, "path", getattr(m, "name", ""))
+                    rank  = getattr(m, "rank", "")
+                    rank_c = {"excellent": C.CRITICAL, "great": C.HIGH}.get(rank, C.MEDIUM)
+                    out.append((f"  [{rank_c}]{rank}[/]  {path}", rank_c))
+                out.append(("", C.NORMAL))
+        if found == 0:
+            out.append(("  Aucun module MSF trouvé pour ces CVE.", C.DIM))
+            out.append(("  → Vérifier msfconsole : search <CVE_ID>", C.DIM))
+    except Exception as e:
+        out.append((f"Erreur msf_mapper: {e}", C.DIM))
+    return out
+
+
+def _fmt_loot() -> list[tuple[str, int]]:
+    return [
+        ("Loot Collector — nécessite un accès SSH", C.TITLE),
+        ("", C.NORMAL),
+        ("  Collecte automatiquement les fichiers sensibles après accès SSH :", C.DIM),
+        ("  clés privées, /etc/shadow, historiques shell, .env, wp-config.php...", C.DIM),
+        ("", C.NORMAL),
+        ("── Usage :", C.HIGH),
+        ("  python3 chocoscan.py -x scan.xml --loot --ssh-user ubuntu --ssh-key ~/.ssh/id_rsa", C.LOW),
+        ("", C.NORMAL),
+        ("  # Avec mot de passe :", C.DIM),
+        ("  python3 chocoscan.py -x scan.xml --loot --ssh-user root --ssh-pass PASSWORD", C.LOW),
+    ]
+
+
+def _fmt_cipher() -> list[tuple[str, int]]:
+    return [
+        ("Cipher Decoder — nécessite un texte à décoder", C.TITLE),
+        ("", C.NORMAL),
+        ("  Identifie et décode automatiquement : Base64/32/16, Hex, Octal,", C.DIM),
+        ("  ROT13/47, Caesar, Morse, JWT, URL-encode, et classe les hashes.", C.DIM),
+        ("", C.NORMAL),
+        ("── Usage :", C.HIGH),
+        ("  python3 chocoscan.py -x scan.xml --cipher 'aGVsbG8gd29ybGQ='", C.LOW),
+        ("  python3 chocoscan.py -x scan.xml --cipher '.- .-.. .-.. --- '", C.LOW),
+        ("  python3 chocoscan.py -x scan.xml --cipher 'CVE-2025-32432'", C.LOW),
+        ("", C.NORMAL),
+        ("── Formats détectés automatiquement :", C.TITLE),
+        ("  Base64, Base32, Hex, Octal, Binaire, URL-encode, HTML entities", C.DIM),
+        ("  ROT13, ROT47, Caesar (brute 25 rotations), Morse", C.DIM),
+        ("  JWT (header+payload, attaques alg:none)", C.DIM),
+        ("  Hashes : MD5, NTLM, SHA1/256/512, bcrypt, Kerberoast, Net-NTLMv2", C.DIM),
+        ("  RSA PEM keys, liens CyberChef générés automatiquement", C.DIM),
+    ]
+
+
+def _fmt_ssh_scan(results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    ssh_svcs = [r for r in results if r.get("service", {}).get("port") == 22]
+    host = ssh_svcs[0].get("service", {}).get("host", "TARGET") if ssh_svcs else "TARGET"
+    out.append(("Scan SSH authentifié — credentialed_scan", C.TITLE))
+    out.append((f"  SSH détecté sur {host}:22", C.HIGH if ssh_svcs else C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("  Se connecte en SSH pour collecter les infos système :", C.DIM))
+    out.append(("  OS exact, paquets installés, services actifs, users,", C.DIM))
+    out.append(("  et améliore la précision du CVE matching.", C.DIM))
+    out.append(("", C.NORMAL))
+    out.append(("── Avec clé privée :", C.TITLE))
+    out.append((f"  python3 chocoscan.py -x scan.xml --ssh-scan {host}     --ssh-user ubuntu --ssh-key ~/.ssh/id_rsa", C.LOW))
+    out.append(("", C.NORMAL))
+    out.append(("── Avec mot de passe :", C.TITLE))
+    out.append((f"  python3 chocoscan.py -x scan.xml --ssh-scan {host}     --ssh-user root --ssh-pass PASSWORD", C.LOW))
+    out.append(("", C.NORMAL))
+    out.append(("── Depuis la config (~/.chocoscan.conf) :", C.TITLE))
+    out.append(("  [ssh]", C.LOW))
+    out.append(("  ssh_user = ubuntu", C.LOW))
+    out.append(("  ssh_key  = ~/.ssh/id_rsa", C.LOW))
+    return out
+
+def _fmt_usage_hint(module_name: str, flag: str, description: str,
+                    example: str) -> list[tuple[str, int]]:
+    """Formatter générique pour les modules nécessitant un argument spécifique."""
+    return [
+        (f"{module_name} — nécessite un argument", C.TITLE),
+        ("", C.NORMAL),
+        (f"  {description}", C.DIM),
+        ("", C.NORMAL),
+        ("  Usage :", C.HIGH),
+        (f"  python3 chocoscan.py -x scan.xml {example}", C.LOW),
+        ("", C.NORMAL),
+        ("  Ce module ne peut pas être exécuté directement depuis",  C.DIM),
+        ("  la vue interactive — il nécessite un paramètre externe.", C.DIM),
+    ]
+
 def _fmt_lateral(result) -> list[tuple[str, int]]:
     out: list[tuple[str, int]] = []
     out.append((f"Lateral Movement — domaine: {result.domain}  cible: {result.target}", C.TITLE))
@@ -1064,6 +1561,33 @@ def _fmt_lateral(result) -> list[tuple[str, int]]:
         if tech.notes:
             out.append((f"    # {tech.notes[0]}", C.DIM))
         out.append(("", C.NORMAL))
+    return out
+
+
+def _fmt_webfp(fp_results) -> list[tuple[str, int]]:
+    out: list[tuple[str, int]] = []
+    total = sum(len(fp.fingerprints) for fp in fp_results)
+    out.append((f"Web Fingerprinter — {len(fp_results)} service(s) sondé(s) — {total} app(s) détectée(s)", C.TITLE))
+    out.append(("", C.NORMAL))
+    for fp in fp_results:
+        out.append((f"── {fp.protocol.upper()}://{fp.host}:{fp.port}  {fp.server}", C.TITLE))
+        if fp.title:
+            out.append((f"   « {fp.title} »", C.DIM))
+        if fp.error:
+            out.append((f"   Erreur : {fp.error}", C.DIM))
+            continue
+        if not fp.fingerprints:
+            out.append(("   Aucune application identifiée", C.DIM))
+            continue
+        for fingerprint in fp.fingerprints:
+            sev_c = {"high": C.CRITICAL, "medium": C.HIGH}.get(fingerprint.confidence, C.MEDIUM)
+            ver = f" {fingerprint.version}" if fingerprint.version else ""
+            out.append((f"  [{fingerprint.confidence.upper()}] {fingerprint.app_name}{ver}", sev_c))
+            out.append((f"    # {fingerprint.detection_method[:80]}", C.DIM))
+        out.append(("", C.NORMAL))
+    if not any(fp.fingerprints for fp in fp_results):
+        out.append(("Aucune application web identifiée.", C.DIM))
+        out.append(("→ Le service utilise peut-être HTTPS — relancer avec le bon protocol.", C.DIM))
     return out
 
 def _fmt_wordlist(result) -> list[tuple[str, int]]:
@@ -1139,6 +1663,10 @@ def _run_module(sugg: ModuleSuggestion, results: list[dict],
             from modules.lateral_movement import generate_lateral_commands
             sugg.output = _fmt_lateral(generate_lateral_commands(results))
 
+        elif sugg.key == "webfp":
+            from modules.web_fingerprinter import fingerprint_all
+            sugg.output = _fmt_webfp(fingerprint_all(results))
+
         elif sugg.key == "wordlist":
             from modules.wordlist_builder import build_wordlists
             sugg.output = _fmt_wordlist(build_wordlists(results))
@@ -1146,6 +1674,62 @@ def _run_module(sugg: ModuleSuggestion, results: list[dict],
         elif sugg.key == "tokens":
             from modules.token_helper import get_token_checks
             sugg.output = _fmt_tokens(get_token_checks())
+
+        elif sugg.key == "adEnum":
+            sugg.output = _fmt_ad_enum(results)
+
+        elif sugg.key == "privesc":
+            sugg.output = _fmt_privesc(results, lhost)
+
+        elif sugg.key == "revshell":
+            sugg.output = _fmt_revshell(lhost, lport)
+
+        elif sugg.key == "defcreds":
+            sugg.output = _fmt_defcreds(results)
+
+        elif sugg.key == "misconfig":
+            sugg.output = _fmt_misconfig(results)
+
+        elif sugg.key == "killchain":
+            sugg.output = _fmt_killchain(results)
+
+        elif sugg.key == "vhost":
+            sugg.output = _fmt_vhost(results)
+
+        elif sugg.key == "enumweb":
+            sugg.output = _fmt_enumweb(results)
+
+        elif sugg.key == "upgshell":
+            sugg.output = _fmt_upgshell(lhost, lport)
+
+        elif sugg.key == "hashcrack":
+            sugg.output = _fmt_usage_hint(
+                "Hash Cracker", "--hashcrack",
+                "Identifie le type de hash et génère les commandes hashcat/john.",
+                "--hashcrack '$6$salt$hashvalue...'",
+            )
+
+        elif sugg.key == "bloodhound":
+            sugg.output = _fmt_usage_hint(
+                "BloodHound Integration", "--bloodhound",
+                "Analyse un fichier de données BloodHound (.zip ou .json).",
+                "--bloodhound bloodhound_data.zip",
+            )
+
+        elif sugg.key == "gtfobins":
+            sugg.output = _fmt_gtfobins()
+
+        elif sugg.key == "msf":
+            sugg.output = _fmt_msf(results)
+
+        elif sugg.key == "loot":
+            sugg.output = _fmt_loot()
+
+        elif sugg.key == "cipher":
+            sugg.output = _fmt_cipher()
+
+        elif sugg.key == "sshscan":
+            sugg.output = _fmt_ssh_scan(results)
 
         else:
             sugg.output = [("Module non reconnu.", C.DIM)]
