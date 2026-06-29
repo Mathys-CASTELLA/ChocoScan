@@ -10,10 +10,9 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Backend-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-Frontend-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![NVD](https://img.shields.io/badge/Source-NVD%20%2B%20CISA%20KEV-red?style=flat-square)](https://nvd.nist.gov)
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![HTB](https://img.shields.io/badge/CTF-HackTheBox%20%7C%20Root--Me-9FEF00?style=flat-square)](https://hackthebox.com)
 
-*Développé par [Kinder-Bueno](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
+*Développé par [Mathys-CASTELLA](https://github.com/Mathys-CASTELLA) — BUT R&T Cybersécurité, IUT de Blagnac*
 
 </div>
 
@@ -580,14 +579,13 @@ CONFIGURATION
 
 ## Auteur
 
-**Mathys CASTELLA** — alias *Kinder-Bueno*
+**Mathys CASTELLA**
 
 Étudiant en BUT Réseaux & Télécommunications, spécialisation Cybersécurité — IUT de Blagnac.
 Projet portfolio développé en parallèle de la formation et de la pratique CTF.
 
 - GitHub : [@Mathys-CASTELLA](https://github.com/Mathys-CASTELLA)
-- CTF : `Kinder-Bueno` sur [HackTheBox](https://hackthebox.com) et [Root-Me](https://root-me.org)
-
+- CTF : [HackTheBox](https://profile.hackthebox.com/profile/019e3a6a-d43e-70b1-82ce-8ca3aeaccb63) et [Root-Me](https://www.root-me.org/Kinder-Bueno)
 ---
 
 <div align="center">
