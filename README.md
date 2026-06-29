@@ -585,7 +585,7 @@ CONFIGURATION
 Projet portfolio développé en parallèle de la formation et de la pratique CTF.
 
 - GitHub : [@Mathys-CASTELLA](https://github.com/Mathys-CASTELLA)
-- CTF : [HackTheBox](https://hackthebox.com](https://profile.hackthebox.com/profile/019e3a6a-d43e-70b1-82ce-8ca3aeaccb63) et [Root-Me](https://www.root-me.org/Kinder-Bueno)
+- CTF : [HackTheBox](https://profile.hackthebox.com/profile/019e3a6a-d43e-70b1-82ce-8ca3aeaccb63) et [Root-Me](https://www.root-me.org/Kinder-Bueno)
 
 ---
 
