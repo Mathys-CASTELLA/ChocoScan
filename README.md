@@ -560,6 +560,11 @@ CONFIGURATION
   config init --force          Écraser la config existante
   config show                  Afficher la config active et ses sources
 ```
+Exemple d'utilisation (durant un CTF htb) :
+
+<img width="1633" height="867" alt="image" src="https://github.com/user-attachments/assets/272897e6-ec89-4ae7-a8b1-1b86b3a84c47" />
+<img width="1305" height="1154" alt="image" src="https://github.com/user-attachments/assets/043ca43d-8527-4afa-bc0b-d9cfba8be3d7" />
+
 
 ---
 
